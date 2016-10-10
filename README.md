@@ -1,6 +1,3 @@
-# ExPerfAnalyzer
-ExPerfAnalyzer parses perfmon .blg files from Exchange servers captured with [ExPerfWiz.ps1](https://experfwiz.codeplex.com) and produces a high-level summary in a text file.
-
 ## Running the script
     .\ExPerfAnalyzer.ps1 EXSERVER01_FULL_000001.BLG
 
@@ -8,7 +5,7 @@ ExPerfAnalyzer parses perfmon .blg files from Exchange servers captured with [Ex
 Execute the script with no parameters and it will register itself as a shell handler for perfmon .blg files. You can then right-click any .blg file and select *ExPerfAnalyzer* to quickly parse the log.
 
 ## Project Vision
-The tool is a PowerShell script currently. We are investigating how to change its design dramatically as PowerShell is not a performant enough platform.
+The tool is a PowerShell script currently. We are investigating new platforms and technologies as PowerShell is not performant enough for us.
 
 ## Inspiration
 This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.codeplex.com) and PMA.VBS (an internal tool used by Windows support).

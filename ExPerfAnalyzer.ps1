@@ -3,7 +3,7 @@ Name:
   ExPerfAnalyzer.ps1
 
 Description:
-  Parses a blg file from an Exchange server captured with ExPerfWiz.ps1
+  Parses perfmon .blg files from an Exchange server captured with ExPerfWiz.ps1
   and produces a high-level summary in a text file.
 
 Author:
@@ -40,7 +40,7 @@ if ($PerfmonFilePath.Trim().Length -eq 0) {
 }
 
 # declare script variables
-$scriptVersion = "0.1.4"
+$scriptVersion = "0.1.5"
 $summary = @()
 $totalSamples = 0
 $earliestTimestamp = [System.DateTime]::MaxValue
@@ -61,10 +61,10 @@ if ($perfmonFile.Extension -inotin $supportedFiletypes) {
 # if no Servers param, detect the servers in the BLG
 if ($Servers -eq $null) {
     $serversDetectionTime = Measure-Command {
-        Write-Host -ForegroundColor Green "Detecting first server..."
+        Write-Host -ForegroundColor Green "Detecting server name..."
         [string] $firstCounter = (Import-Counter $PerfmonFilePath -Counter "\\*\System\Processor Queue Length")[0].CounterSamples.Path
         $Servers = ($firstCounter -split '\\')[2]
-        Write-Debug "Detected server(s): $Servers"
+        Write-Debug "Detected server: $Servers"
     }
     Write-Host "  completed in $("{0:N1}" -f $serversDetectionTime.TotalSeconds) seconds."
 }
@@ -85,7 +85,8 @@ Add-Type -TypeDefinition @"
         ASPNET,
         MSExchangeIS,
         HttpProxy,
-        RpcClientAccess
+        RpcClientAccess,
+        TopNProcesses
     }
 "@
 
@@ -177,7 +178,6 @@ $counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
 # MSExchangeADAccess COUNTERS #
 ###############################
 # these counters throw an CounterPathIsInvalid exception even though they succeed... unsure why.
-# bug being tracked in https://experfanalyzer.codeplex.com/workitem/12
 $counters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeADAccess;
                                          'Name'="\MSExchange ADAccess Domain Controllers(*)\LDAP Search Time";
                                          'FormatDivider'=1;
@@ -230,6 +230,13 @@ $counters += New-Object PSObject -Prop @{'Category'=[Category]::RpcClientAccess;
                                          'Name'="\MSExchange RpcClientAccess\RPC Requests";
                                          'FormatDivider'=1;
                                          'FormatString'="{0:N0}";}
+##########################
+# TopNProcesses COUNTERS #
+##########################
+$counters += New-Object PSObject -Prop @{'Category'=[Category]::TopNProcesses;
+                                         'Name'="\Process(*)\% Processor Time";
+                                         'FormatDivider'=100;
+                                         'FormatString'="{0:p1}";}
 }
 Write-Host "  completed in $("{0:N1}" -f $counterInitTime.TotalSeconds) seconds."
 
@@ -281,7 +288,7 @@ function ParseCounters {
                 for ($j = 0; $j -lt $numInstances; $j++) {
 
                     # prepare summary variables for instance
-                    [string] $instanceName = $samples[0].CounterSamples[$j].InstanceName
+                    [string] $instanceName = $samples[0].CounterSamples[$j].Path.Split(("(", ")"))[1]
                     if (IsIgnoredInstance($instanceName)) {
                         Write-Debug "Ignoring instance: $instanceName"
                         continue
@@ -326,13 +333,13 @@ function ParseCounters {
                         $instanceStr = $instanceName
                     }
                     $summaryLine | Add-Member -Type NoteProperty -Name Instance -Value $instanceStr
-                    $minStr = $counter.FormatString -f ($min / $counter.FormatDivider)
-                    $summaryLine | Add-Member -Type NoteProperty -Name Min -Value $minStr
-                    $maxStr = $counter.FormatString -f ($max / $counter.FormatDivider)
-                    $summaryLine | Add-Member -Type NoteProperty -Name Max -Value $maxStr
+                    #$minStr = $counter.FormatString -f ($min / $counter.FormatDivider)
+                    $summaryLine | Add-Member -Type NoteProperty -Name Min -Value $min
+                    #$maxStr = $counter.FormatString -f ($max / $counter.FormatDivider)
+                    $summaryLine | Add-Member -Type NoteProperty -Name Max -Value $max
                     $avg = $value / $numSamples
-                    $avgStr = $counter.FormatString -f ($avg / $counter.FormatDivider)
-                    $summaryLine | Add-Member -Type NoteProperty -Name Avg -Value $avgStr
+                    #$avgStr = $counter.FormatString -f ($avg / $counter.FormatDivider)
+                    $summaryLine | Add-Member -Type NoteProperty -Name Avg -Value $avg
                     # only add lines that have meaningful value
                     if ($max -gt 0) { $script:summary += $summaryLine }
                 } #end instance loop
@@ -349,13 +356,55 @@ function AddLine([string] $str) {
     $script:outStr += $str + "`r`n"
 }
 
+function PrintSummary($lines) {
+    foreach ($val in $lines) {
+        # 1) We need to special case certain counters that do not have an instance so their value resides at the counter line instead
+        # 2) _total can be shifted up to the counter line as well
+        if (IsPrintAtServerLevelCounter($val.Counter) -or $val.Instance.Contains("_total")) {
+            Write-Debug "printDetailLineAtCounterLevel = true"
+            $printDetailLineAtCounterLevel = $true
+        } else {
+            $printDetailLineAtCounterLevel = $false
+        }
+
+        if ($prevCategory -ne $val.Category) {
+            # if new category, print Category
+            $prevCategory = $val.Category
+            AddLine("")
+            AddLine("{0,-$($detailLineStrLength+4)} {1,10} {2,10} {3,10}" -f $val.Category, "Min", "Max", "Avg")
+            AddLine("====================================================================================")
+            $prevCounter = $null
+        }
+
+        # grab the FormatString as we'll need it to format the min/max/avg
+        $counter = $script:counters | ? {$_.Name -eq $val.Counter}
+        $minStr = $counter.FormatString -f ($val.Min / $counter.FormatDivider)
+        $maxStr = $counter.FormatString -f ($val.Max / $counter.FormatDivider)
+        $avgStr = $counter.FormatString -f ($val.Avg / $counter.FormatDivider)
+
+        if ($prevCounter -ne $val.Counter) {
+            # if new counter, print Counter
+            $prevCounter = $val.Counter
+            if (-not $printDetailLineAtCounterLevel) {
+                AddLine("{0,-50}" -f $val.Counter)
+            } else {
+                AddLine("  {0,-$($detailLineStrLength+2)} {1,10} {2,10} {3,10}" -f $val.Counter, $minStr, $maxStr, $avgStr)
+            }
+        }
+
+        # print the actual summary line
+        if (-not $printDetailLineAtCounterLevel) {
+            AddLine("    {0,-$detailLineStrLength} {1,10} {2,10} {3,10}" -f $val.Instance, $minStr, $maxStr, $avgStr)
+        }
+    }
+}
+
 function OutputSummary {
     Write-Host -ForegroundColor Green "Writing text file..."
     # uncomment the following line if you want the data sent directly to console
     # $script:summary | ft counter,server,instance,max,min,avg
 
     $writeTime = Measure-Command {
-        
     
         # Log Summary
         AddLine("Exchange Perfmon Log Summary")
@@ -368,50 +417,11 @@ function OutputSummary {
         AddLine("{0,-18} : {1}s" -f "Sample Interval", $script:sampleInterval)
 
         # Counters by CATEGORY, COUNTER, SERVER, INSTANCE
-        $script:summary = ($script:summary | sort Category, Counter, Server, Instance)
+        $regularSummary = ($script:summary | ? {$_.Counter -ne "\Process(*)\% Processor Time"} | sort Category, Counter, Server, Instance)
+        $topNSummary = ($script:summary | ? {$_.Counter -eq "\Process(*)\% Processor Time" -and $_.Instance -ne '_total' -and $_.Instance -ne 'idle'} | sort Avg -Descending | select -first 10)
 
-        foreach ($val in $script:summary) {
-            # 1) We need to special case certain counters that do not have an instance so their value resides at the server line instead
-            # 2) _total can be shifted up to the server line as well
-            if (IsPrintAtServerLevelCounter($val.Counter) -or $val.Instance.Contains("_total")) {
-                Write-Debug "printDetailLineAtServerLevel = true"
-                $printDetailLineAtServerLevel = $true
-            } else {
-                $printDetailLineAtServerLevel = $false
-            }
-
-            if ($prevCategory -ne $val.Category) {
-                # if new category, print Category, Counter, Server
-                $prevCategory = $val.Category
-                AddLine("")
-                AddLine("{0,-$($detailLineStrLength+4)} {1,10} {2,10} {3,10}" -f $val.Category, "Min", "Max", "Avg")
-                AddLine("====================================================================================")
-                $prevCounter = $null
-                $prevServer = $null
-            }
-
-            if ($prevCounter -ne $val.Counter) {
-                # if new counter, print Counter, Server
-                $prevCounter = $val.Counter
-                AddLine("{0,-50}" -f $val.Counter)
-                $prevServer = $null
-            }
-
-            if ($prevServer -ne $val.Server -or $printDetailLineAtServerLevel) {
-                # if new server, print Server
-                $prevServer = $val.Server
-                if ($printDetailLineAtServerLevel) {
-                    AddLine("  {0,-$($detailLineStrLength+2)} {1,10} {2,10} {3,10}" -f $val.Server, $val.Min, $val.Max, $val.Avg)
-                } else {
-                    AddLine("  {0,-$($detailLineStrLength+2)}" -f $val.Server)
-                }
-            }
-
-            # print the actual summary line
-            if (-not $printDetailLineAtServerLevel) {
-                AddLine("    {0,-$detailLineStrLength} {1,10} {2,10} {3,10}" -f $val.Instance, $val.Min, $val.Max, $val.Avg)
-            }
-        }
+        PrintSummary($regularSummary)
+        PrintSummary($topNSummary)
         AddLine("")
 
         # Analysis Stats

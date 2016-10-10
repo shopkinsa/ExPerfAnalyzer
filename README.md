@@ -11,6 +11,10 @@ The tool is a PowerShell script currently. We are investigating new platforms an
 This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.codeplex.com) and PMA.VBS (an internal tool used by Windows support).
 
 ## Changelog
+* v0.1.5 (2016-10-10)
+  - reverted to single-server support only
+  - added counter: HttpProxy\Average ClientAccess Server Processing Latency
+  - added top 10 processes by % Processor Time
 * v0.1.4 (2016-09-30)
   - executing the script without an input file will register itself as a shell handler for perfmon .blg files
   - summary text file will be opened at end of script execution

@@ -10,6 +10,27 @@ The tool is a PowerShell script currently. We are investigating new platforms an
 ## Inspiration
 This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.codeplex.com) and PMA.VBS (an internal tool used by Windows support).
 
+## FAQ
+**There are a bunch of errors streaming by when the script runs.**
+
+Don't worry about it. It's either a bug with the native PS cmdlet Import-Counter or a counter is missing from your perfmon.
+
+**This takes forever to run.**
+
+It's faster than PAL.
+
+**Why don't I just use PAL?**
+
+You could, but PAL takes even longer to run and throws a lot of false positives.
+
+**Can I edit this script however I'd like?**
+
+Yes, that's the magic of open source software!
+
+**Do you accept pull requests? Can I contribute to the script?**
+
+Of course!
+
 ## Changelog
 * v0.1.6 (2016-10-11)
   - improved formatting

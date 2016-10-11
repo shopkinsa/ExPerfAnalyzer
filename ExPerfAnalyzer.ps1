@@ -40,14 +40,15 @@ if ($PerfmonFilePath.Trim().Length -eq 0) {
 }
 
 # declare script variables
-$scriptVersion = "0.1.5"
+$scriptVersion = "0.1.6"
 $summary = @()
 $totalSamples = 0
 $earliestTimestamp = [System.DateTime]::MaxValue
 $latestTimestamp = [System.DateTime]::MinValue
 [int] $sampleInterval = 0 # this will be an average amongst all the samples
 $outStr = ""
-$detailLineStrLength = 46
+$detailLineStrLength = 48
+$columnWidth = 12
 $perfmonFile = Get-ChildItem $PerfmonFilePath
 $perfmonFilename = $perfmonFile.Name
 $outFile = $PerfmonFilePath + "-Summary.txt"
@@ -360,20 +361,11 @@ function PrintSummary($lines) {
     foreach ($val in $lines) {
         # 1) We need to special case certain counters that do not have an instance so their value resides at the counter line instead
         # 2) _total can be shifted up to the counter line as well
-        if (IsPrintAtServerLevelCounter($val.Counter) -or $val.Instance.Contains("_total")) {
+        if (IsPrintAtServerLevelCounter($val.Counter)) {
             Write-Debug "printDetailLineAtCounterLevel = true"
             $printDetailLineAtCounterLevel = $true
         } else {
             $printDetailLineAtCounterLevel = $false
-        }
-
-        if ($prevCategory -ne $val.Category) {
-            # if new category, print Category
-            $prevCategory = $val.Category
-            AddLine("")
-            AddLine("{0,-$($detailLineStrLength+4)} {1,10} {2,10} {3,10}" -f $val.Category, "Min", "Max", "Avg")
-            AddLine("====================================================================================")
-            $prevCounter = $null
         }
 
         # grab the FormatString as we'll need it to format the min/max/avg
@@ -382,20 +374,37 @@ function PrintSummary($lines) {
         $maxStr = $counter.FormatString -f ($val.Max / $counter.FormatDivider)
         $avgStr = $counter.FormatString -f ($val.Avg / $counter.FormatDivider)
 
-        if ($prevCounter -ne $val.Counter) {
-            # if new counter, print Counter
-            $prevCounter = $val.Counter
-            if (-not $printDetailLineAtCounterLevel) {
-                AddLine("{0,-50}" -f $val.Counter)
-            } else {
-                AddLine("  {0,-$($detailLineStrLength+2)} {1,10} {2,10} {3,10}" -f $val.Counter, $minStr, $maxStr, $avgStr)
-            }
+        $isNewCategory = $prevCategory -ne $val.Category
+        $isNewCounter = $prevCounter -ne $val.Counter
+
+        if ($isNewCategory) {
+            # if new category, print Category
+            $prevCategory = $val.Category
+            AddLine("")
+            AddLine("{0,-$($detailLineStrLength+2)} {1,$columnWidth} {2,$columnWidth} {3,$columnWidth}" -f $val.Category, "Min", "Max", "Avg")
+            AddLine("==========================================================================================")
+            $prevCounter = $null
         }
 
-        # print the actual summary line
-        if (-not $printDetailLineAtCounterLevel) {
-            AddLine("    {0,-$detailLineStrLength} {1,10} {2,10} {3,10}" -f $val.Instance, $minStr, $maxStr, $avgStr)
+        # if printDetailLineAtCounterLevel, print Counter + detail
+        # else
+        #   if new counter, print counter
+        #   print detail line
+
+        if ($printDetailLineAtCounterLevel) {
+            AddLine("{0,-$($detailLineStrLength+2)} {1,$columnWidth} {2,$columnWidth} {3,$columnWidth}" -f $val.Counter, $minStr, $maxStr, $avgStr)
+        } else {
+
+            # if new counter, print Counter
+            if ($isNewCounter) {
+                $prevCounter = $val.Counter
+                AddLine("{0,-$($detailLineStrLength+2)}" -f $val.Counter)
+            }
+
+            # print the detail line
+            AddLine("  {0,-$detailLineStrLength} {1,$columnWidth} {2,$columnWidth} {3,$columnWidth}" -f $val.Instance, $minStr, $maxStr, $avgStr)
         }
+
     }
 }
 
@@ -410,7 +419,7 @@ function OutputSummary {
         AddLine("Exchange Perfmon Log Summary")
         AddLine("=============================")
         AddLine("{0,-18} : {1}" -f "Log Filename", $script:perfmonFilename)
-        AddLine("{0,-18} : {1}" -f "Server(s)", ($Servers -join ", "))
+        AddLine("{0,-18} : {1}" -f "Server", ($Servers -join ", "))
         AddLine("{0,-18} : {1}" -f "Earliest Timestamp", $script:earliestTimestamp)
         AddLine("{0,-18} : {1}" -f "Latest Timestamp", $script:latestTimestamp)
         AddLine("{0,-18} : {1}" -f "Log Duration", ($script:latestTimestamp - $script:earliestTimestamp))

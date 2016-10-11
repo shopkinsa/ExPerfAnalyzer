@@ -11,6 +11,9 @@ The tool is a PowerShell script currently. We are investigating new platforms an
 This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.codeplex.com) and PMA.VBS (an internal tool used by Windows support).
 
 ## Changelog
+* v0.1.6 (2016-10-11)
+  - improved formatting
+  - increased min/max/avg column width from 10 to 12 characters
 * v0.1.5 (2016-10-10)
   - reverted to single-server support only
   - added counter: HttpProxy\Average ClientAccess Server Processing Latency

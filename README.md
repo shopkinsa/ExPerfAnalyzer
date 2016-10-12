@@ -1,5 +1,5 @@
 ## Running the script
-    .\ExPerfAnalyzer.ps1 EXSERVER01_FULL_000001.BLG
+    .\ExPerfAnalyzer.ps1 .\EXSERVER01_FULL_000001.BLG
 
 ## Registering script as a default handler
 Execute the script with no parameters and it will register itself as a shell handler for perfmon .blg files. You can then right-click any .blg file and select *ExPerfAnalyzer* to quickly parse the log.

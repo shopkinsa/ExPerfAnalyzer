@@ -18,6 +18,10 @@ This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.cod
 - **Why don't I just use PAL?**
 
     You could, but PAL takes even longer to run and throws a lot of false positives.
+	
+- **What's the expected running time?**
+
+	v0.1.7 and an Intel Core i7-4810MQ @ 2.8Ghz processed a 1GB perfmon sitting on an SSD in 129 seconds.
 
 - **Can I edit this script however I'd like?**
 

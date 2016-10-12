@@ -266,6 +266,8 @@ function IsPrintAtServerLevelCounter($str) {
 }
 
 function ParseCounters {
+    $ErrorActionPreference = "SilentlyContinue"
+
     Write-Host -ForegroundColor Green "Parsing file..."
 
     $script:processingTime = Measure-Command {
@@ -278,7 +280,7 @@ function ParseCounters {
                 # load in data from file
                 $str = "\\" + $server + $counter.Name
                 Write-Verbose "Processing counter: $str"
-                $samples = Import-Counter $PerfmonFilePath -Counter $str -ErrorAction SilentlyContinue
+                $samples = Import-Counter $PerfmonFilePath -Counter $str
 
                 $numSamples = $samples.Count
                 $numInstances = $samples[0].CounterSamples.Count
@@ -351,6 +353,7 @@ function ParseCounters {
         
     }
     Write-Host "  completed in $("{0:N1}" -f $script:processingTime.TotalSeconds) seconds."
+    $ErrorActionPreference = "Continue"
 }
 
 function AddLine([string] $str) {

@@ -40,7 +40,7 @@ if ($PerfmonFilePath.Trim().Length -eq 0) {
 }
 
 # declare script variables
-$scriptVersion = "0.1.6"
+$scriptVersion = "0.1.7"
 $summary = @()
 $totalSamples = 0
 $earliestTimestamp = [System.DateTime]::MaxValue
@@ -49,7 +49,7 @@ $latestTimestamp = [System.DateTime]::MinValue
 $outStr = ""
 $detailLineStrLength = 48
 $columnWidth = 12
-$perfmonFile = Get-ChildItem $PerfmonFilePath
+$perfmonFile = Get-ChildItem $PerfmonFilePath -ErrorAction Stop
 $perfmonFilename = $perfmonFile.Name
 $outFile = $PerfmonFilePath + "-Summary.txt"
 [string[]] $supportedFiletypes = ".blg", ".csv", ".tsv"
@@ -278,7 +278,7 @@ function ParseCounters {
                 # load in data from file
                 $str = "\\" + $server + $counter.Name
                 Write-Verbose "Processing counter: $str"
-                $samples = Import-Counter $PerfmonFilePath -Counter $str
+                $samples = Import-Counter $PerfmonFilePath -Counter $str -ErrorAction SilentlyContinue
 
                 $numSamples = $samples.Count
                 $numInstances = $samples[0].CounterSamples.Count

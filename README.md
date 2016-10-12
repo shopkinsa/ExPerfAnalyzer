@@ -11,10 +11,6 @@ The tool is a PowerShell script currently. We are investigating new platforms an
 This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.codeplex.com) and PMA.VBS (an internal tool used by Windows support).
 
 ## FAQ
-- **There are a bunch of errors streaming by when the script runs.**
-
-    Don't worry about it. It's either a bug with the native PS cmdlet Import-Counter or a counter is missing from your perfmon.
-
 - **This takes forever to run.**
 
     It's faster than PAL.
@@ -32,6 +28,9 @@ This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.cod
     Of course!
 
 ## Changelog
+* v0.1.7 (2016-10-12)
+  - failure to find the input file stops the script
+  - Import-Counter errors are now hidden during execution
 * v0.1.6 (2016-10-11)
   - improved formatting
   - increased min/max/avg column width from 10 to 12 characters

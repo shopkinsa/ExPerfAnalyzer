@@ -40,7 +40,8 @@ if ($PerfmonFilePath.Trim().Length -eq 0) {
 }
 
 # declare script variables
-$scriptVersion = "0.1.7"
+$scriptVersion = "0.1.8"
+$TOP_N_PROCESSES = 10 # show top 10 by default. change this if you want more or less.
 $summary = @()
 $totalSamples = 0
 $earliestTimestamp = [System.DateTime]::MaxValue
@@ -72,6 +73,7 @@ if ($Servers -eq $null) {
 
 # the fun starts here!
 $counters = @()
+$topNcounters = @()
 Write-Host -ForegroundColor Green "Initializing counter list..."
 $counterInitTime = Measure-Command {
 # define our enum so that the output can be ordered by Category
@@ -234,10 +236,15 @@ $counters += New-Object PSObject -Prop @{'Category'=[Category]::RpcClientAccess;
 ##########################
 # TopNProcesses COUNTERS #
 ##########################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::TopNProcesses;
+$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::TopNProcesses;
                                          'Name'="\Process(*)\% Processor Time";
                                          'FormatDivider'=100;
                                          'FormatString'="{0:p1}";}
+$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::TopNProcesses;
+                                         'Name'="\Process(*)\Working Set";
+                                         'FormatDivider'=1MB;
+                                         'FormatString'="{0:N0}MB";}
+$counters += $topNCounters # we keep track of topNcounters for when we need to print later
 }
 Write-Host "  completed in $("{0:N1}" -f $counterInitTime.TotalSeconds) seconds."
 
@@ -429,8 +436,10 @@ function OutputSummary {
         AddLine("{0,-18} : {1}s" -f "Sample Interval", $script:sampleInterval)
 
         # Counters by CATEGORY, COUNTER, SERVER, INSTANCE
-        $regularSummary = ($script:summary | ? {$_.Counter -ne "\Process(*)\% Processor Time"} | sort Category, Counter, Server, Instance)
-        $topNSummary = ($script:summary | ? {$_.Counter -eq "\Process(*)\% Processor Time" -and $_.Instance -ne '_total' -and $_.Instance -ne 'idle'} | sort Avg -Descending | select -first 10)
+        $regularSummary = ($script:summary | ? {$_.Counter -notin $topNcounters.Name} | sort Category, Counter, Server, Instance)
+        foreach ($topNcounter in $topNcounters) {
+            $topNSummary += ($script:summary | ? {$_.Counter -eq $topNcounter.Name -and $_.Instance -ne '_total' -and $_.Instance -ne 'idle'} | sort Avg -Descending | select -first $TOP_N_PROCESSES)
+        }
 
         PrintSummary($regularSummary)
         PrintSummary($topNSummary)

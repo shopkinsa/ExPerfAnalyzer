@@ -32,6 +32,8 @@ This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.cod
     Of course!
 
 ## Changelog
+* v0.1.9 (2016-12-20)
+  - using \Processor(_Total)\% Processor Time as the counter to auto-detect server name now
 * v0.1.8 (2016-12-15)
   - added top 10 processes by working set
   - made the N in top N processes a variable so it can be customized

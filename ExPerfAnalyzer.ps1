@@ -40,7 +40,7 @@ if ($PerfmonFilePath.Trim().Length -eq 0) {
 }
 
 # declare script variables
-$scriptVersion = "0.1.8"
+$scriptVersion = "0.1.9"
 $TOP_N_PROCESSES = 10 # show top 10 by default. change this if you want more or less.
 $summary = @()
 $totalSamples = 0
@@ -64,7 +64,7 @@ if ($perfmonFile.Extension -inotin $supportedFiletypes) {
 if ($Servers -eq $null) {
     $serversDetectionTime = Measure-Command {
         Write-Host -ForegroundColor Green "Detecting server name..."
-        [string] $firstCounter = (Import-Counter $PerfmonFilePath -Counter "\\*\System\Processor Queue Length")[0].CounterSamples.Path
+        [string] $firstCounter = (Import-Counter $PerfmonFilePath -Counter "\\*\Processor(_Total)\% Processor Time")[0].CounterSamples.Path
         $Servers = ($firstCounter -split '\\')[2]
         Write-Debug "Detected server: $Servers"
     }

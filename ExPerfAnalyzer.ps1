@@ -93,6 +93,49 @@ Add-Type -TypeDefinition @"
     }
 "@
 
+$filterCounters = @(
+"\.NET CLR Memory(*)\% Time in GC"
+"\.NET CLR Memory(*)\Process ID"
+"\ASP.NET Applications(*)\Requests Executing"
+"\ASP.NET Applications(*)\Requests/Sec"
+"\LogicalDisk(*)\% Idle Time"
+"\LogicalDisk(*)\Avg. Disk Sec/Read"
+"\LogicalDisk(*)\Avg. Disk Sec/Write"
+"\LogicalDisk(*)\Current Disk Queue Length"
+"\LogicalDisk(*)\Avg. Disk Queue Length"
+"\Memory\Available MBytes"
+"\MSExchange ADAccess Domain Controllers(*)\LDAP Read Time"
+"\MSExchange ADAccess Domain Controllers(*)\LDAP Search Time"
+"\MSExchange Database(*)\Database Cache % Hit"
+"\MSExchange RpcClientAccess\Active User Count"
+"\MSExchange RpcClientAccess\RPC Averaged Latency"
+"\MSExchange RpcClientAccess\RPC Operations/sec"
+"\MSExchange RpcClientAccess\User Count"
+"\MSExchangeIS Client Type(*)\RPC Average Latency" 
+"\MSExchangeIS Client Type(*)\RPC Operations/sec"
+"\MSExchangeIS Store(*)\% RPC Requests"
+"\MSExchangeIS Store(*)\Active mailboxes"
+"\MSExchangeIS Store(*)\RPC Average Latency" 
+"\MSExchangeIS Store(*)\RPC Operations/sec"
+"\Netlogon(*)\*"
+"\Network Interface(*)\Packets Received Discarded"
+"\Network Interface(*)\Packets Outbound Discarded"
+"\Process(*)\% Processor Time"
+"\Process(*)\% Privileged Time"
+"\Process(*)\ID Process"
+"\Process(*)\Thread Count"
+"\Process(*)\Working Set"
+"\Process(*)\IO Data Bytes/sec"
+"\Process(*)\IO Data Operations/sec"
+"\Processor(*)\% Privileged Time"
+"\Processor(*)\% Processor Time"
+"\Processor Information(*)\% of Maximum Frequency"
+"\System\Processor Queue Length"
+"\System\Context Switches/sec"
+"\W3SVC_W3WP(*)\Requests / Sec"
+"\W3SVC_W3WP(*)\Active Requests"
+) 
+
 ######################
 # PROCESSOR COUNTERS #
 ######################
@@ -272,6 +315,23 @@ function IsPrintAtServerLevelCounter($str) {
     return $false
 }
 
+Function Create-RelogFilterLog {
+
+    
+
+}
+
+Function Relog-ExtractorWrapper {
+param(
+[Parameter(Mandatory=$true)][string]$BlgFilePath,
+[Parameter(Mandatory=$true)][string]$FilterCounterPath,
+[Parameter(Mandatory=$true)][string]$OutFilePath
+)
+    $r = relog.exe $BlgFilePath -o $OutFilePath -f CSV -cf $FilterCounterPath
+    if($r.contains("The command completed successfully.")){return $true}
+    else{Write-Host "Unable to run relog, look at the error to determine why we are having an issue"; sleep 2; $r; return $false}
+}
+
 function ParseCounters {
     $ErrorActionPreference = "SilentlyContinue"
 
@@ -281,7 +341,7 @@ function ParseCounters {
 
         # summarize counters grouped by COUNTER, SERVER, INSTANCE
         foreach ($counter in $counters) {
-
+            Write-Debug "counter"
             foreach ($server in $Servers) {
             
                 # load in data from file
@@ -466,6 +526,7 @@ function OutputSummary {
 }
 
 # parse our data
+Write-Debug "ParseCounters break"
 ParseCounters
 
 # write output to text file

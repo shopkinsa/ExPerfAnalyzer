@@ -40,7 +40,7 @@ if ($PerfmonFilePath.Trim().Length -eq 0) {
 }
 
 # declare script variables
-$scriptVersion = "0.1.9"
+$scriptVersion = "0.2.0"
 $TOP_N_PROCESSES = 10 # show top 10 by default. change this if you want more or less.
 $summary = @()
 $totalSamples = 0
@@ -74,6 +74,7 @@ if ($Servers -eq $null) {
 # the fun starts here!
 $counters = @()
 $topNcounters = @()
+$topNSummary = @()
 Write-Host -ForegroundColor Green "Initializing counter list..."
 $counterInitTime = Measure-Command {
 # define our enum so that the output can be ordered by Category
@@ -89,6 +90,7 @@ Add-Type -TypeDefinition @"
         MSExchangeIS,
         HttpProxy,
         RpcClientAccess,
+        MSExchangeActiveSync,
         TopNProcesses
     }
 "@
@@ -177,6 +179,14 @@ $counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
                                          'Name'="\LogicalDisk(*)\% Idle Time";
                                          'FormatDivider'=100;
                                          'FormatString'="{0:p1}";}
+$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
+                                         'Name'="\LogicalDisk(*)\Avg. Disk sec/Read";
+                                         'FormatDivider'=0.001;
+                                         'FormatString'="{0:N1}ms";}
+$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
+                                         'Name'="\LogicalDisk(*)\Avg. Disk sec/Write";
+                                         'FormatDivider'=0.001;
+                                         'FormatString'="{0:N1}ms";}
 ###############################
 # MSExchangeADAccess COUNTERS #
 ###############################
@@ -218,6 +228,10 @@ $counters += New-Object PSObject -Prop @{'Category'=[Category]::HttpProxy;
                                          'Name'="\MSExchange HttpProxy(*)\Average ClientAccess Server Processing Latency";
                                          'FormatDivider'=1;
                                          'FormatString'="{0:N1}ms";}
+$counters += New-Object PSObject -Prop @{'Category'=[Category]::HttpProxy;
+                                         'Name'="\MSExchange HttpProxy(eas)\Outstanding Proxy Requests";
+                                         'FormatDivider'=1;
+                                         'FormatString'="{0:N0}";}                                        
 ############################
 # RpcClientAccess COUNTERS #
 ############################
@@ -233,6 +247,25 @@ $counters += New-Object PSObject -Prop @{'Category'=[Category]::RpcClientAccess;
                                          'Name'="\MSExchange RpcClientAccess\RPC Requests";
                                          'FormatDivider'=1;
                                          'FormatString'="{0:N0}";}
+#######################
+# ActiveSync COUNTERS #
+#######################
+$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeActiveSync;
+                                         'Name'="\MSExchange ActiveSync\Ping Commands Pending";
+                                         'FormatDivider'=1;
+                                         'FormatString'="{0:N0}";}
+$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeActiveSync;
+                                         'Name'="\MSExchange ActiveSync\Sync Commands Pending";
+                                         'FormatDivider'=1;
+                                         'FormatString'="{0:N0}";}
+$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeActiveSync;
+                                         'Name'="\MSExchange ActiveSync\Requests/sec";
+                                         'FormatDivider'=1;
+                                         'FormatString'="{0:N0}";}
+$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeActiveSync;
+                                         'Name'="\MSExchange ActiveSync\Current Requests";
+                                         'FormatDivider'=1;
+                                         'FormatString'="{0:N0}";}											 
 ##########################
 # TopNProcesses COUNTERS #
 ##########################
@@ -252,7 +285,7 @@ Write-Host "  completed in $("{0:N1}" -f $counterInitTime.TotalSeconds) seconds.
 [string[]] $ignoredInstances = "isatap", "harddiskvolume"
 
 # list of counters we want to promote to server-level detail printing
-[string[]] $listCountersPrintAtServerLevel = "MSExchange RpcClientAccess", "Memory", "Processor Queue Length"
+[string[]] $listCountersPrintAtServerLevel = "MSExchange RpcClientAccess", "Memory", "Processor Queue Length", "MSExchange ActiveSync"
 
 function IsIgnoredInstance($str) {
     foreach ($s in $script:ignoredInstances) {
@@ -419,7 +452,7 @@ function PrintSummary($lines) {
 }
 
 function OutputSummary {
-    Write-Host -ForegroundColor Green "Writing text file..."
+    Write-Host -ForegroundColor Green "Writing text file to: " $script:outFile
     # uncomment the following line if you want the data sent directly to console
     # $script:summary | ft counter,server,instance,max,min,avg
 

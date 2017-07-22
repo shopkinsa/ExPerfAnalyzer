@@ -723,30 +723,6 @@ param(
 		return $serverPerfObject
 	}
 
-	Function Add-ServerPerformanceObject_Value {
-	[CmdletBinding()]
-	[OutputType([System.Collections.Generic.List[System.Object]])]
-	param(
-		[Parameter(Mandatory=$true)][array]$CounterSampleData
-	)
-		Write-Verbose("[{0}] : Calling Add-ServerPerformanceObject_Value" -f [system.dateTime]::Now)
-		$values = New-Object System.Collections.Generic.List[System.Object]
-		$measure_loop = Measure-Command {
-			foreach($csd in $CounterSampleData)
-			{
-				$tRawData = New-Object -TypeName PerformanceHealth.RawDataObject
-				$tRawData.TimeStamp = $csd.TimeStamp 
-				$tRawData.CookedValue = $csd.CookedValue
-				$tRawData | Add-Member -Name TimeBase -MemberType NoteProperty -Value $csd.TimeBase
-				$tRawData | Add-Member -Name RawValue -MemberType NoteProperty -Value $csd.RawValue 
-				$tRawData | Add-Member -Name SecondValue -MemberType NoteProperty -Value $csd.SecondValue 
-				$values.Add($tRawData)
-			}
-		}
-		Write-Verbose("[{0}] : Took {1} seconds to process {2} items" -f [datetime]::Now, $measure_loop.Seconds, $CounterSampleData.Count)
-		return $values
-	}
-
 	$Script:convertMeasureTime = Measure-Command{
 	$tMasterObject = New-Object System.Collections.Generic.List[System.Object]
 		$Script:convert_Total_PathGroup = Measure-Command{

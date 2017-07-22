@@ -727,24 +727,6 @@ param(
 		return $serverPerfObject
 	}
 
-	Function Add-ServerPerformanceObject_ValueTemp {
-	[CmdletBinding()]
-	[OutputType([System.Collections.Generic.List[System.Object]])]
-	param(
-		[Parameter(Mandatory=$true)][array]$CounterSampleData
-	)
-		Write-Verbose("[{0}] : Calling Add-ServerPerformanceObject_Value" -f [system.dateTime]::Now)
-		$values = New-Object System.Collections.Generic.List[System.Object]
-		$measure_loop = Measure-Command {
-			foreach($csd in $CounterSampleData)
-			{
-				$values.Add($csd)
-			}
-		}
-		Write-Verbose("[{0}] : Took {1} seconds to process {2} items" -f [datetime]::Now, $measure_loop.Seconds, $CounterSampleData.Count)
-		return $values
-	}
-
 	Function Add-ServerPerformanceObject_Value {
 	[CmdletBinding()]
 	[OutputType([System.Collections.Generic.List[System.Object]])]
@@ -776,7 +758,7 @@ param(
 	{
 		$counterNameObj = Get-FullCounterNameObject -PerformanceCounterSample $gPath.Group[0]
 		$counterDataObj = Build-ServerPerformanceObject_CounterData -CounterNameObject $counterNameObj 
-		$counterDataObj | Add-Member -Name RawData -MemberType NoteProperty -Value  ((Add-ServerPerformanceObject_ValueTemp -CounterSampleData ($gPath.Group | select -Skip 1)))
+		$counterDataObj | Add-Member -Name RawData -MemberType NoteProperty -Value $gPath.Group
 		$counterDataObj.CounterType = $counterDataObj.RawData[0].CounterType
 		$tMasterObject.Add($counterDataObj)
 	}
@@ -851,7 +833,7 @@ param(
 		{
 			foreach($counterObj in $svrObj.CounterData)
 			{
-				$measured = $counterObj.RawData | Select-Object -Skip 1 | Measure-Object -Property CookedValue -Maximum -Minimum -Average
+				$measured = $counterObj.RawData | Measure-Object -Property CookedValue -Maximum -Minimum -Average
 
 				$counterObj.QuickSummaryStats.Min = $measured.Minimum
 				$counterObj.QuickSummaryStats.Max = $measured.Maximum

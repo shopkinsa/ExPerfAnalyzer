@@ -54,7 +54,7 @@ namespace PerformanceHealth
 		public System.DateTime EndTime;
 		public AccuracyObject Accuracy;
 		public HealthReport HealthReport;
-		//public System.Array CounterData;
+		public object[] CounterData;
 	}
 	
 	public class CounterDataObject
@@ -72,9 +72,17 @@ namespace PerformanceHealth
 		public DisplayOptionsObject DisplayOptions;
 		public CounterThresholds Threshold;
 		public QuickSummaryStatsObject QuickSummaryStats;
-		//public System.Array RawData; 
+		public object[] RawData; 
 	}
 
+	public class CounterNameObject
+    {
+        public string ServerName;
+        public string ObjectName;
+        public string CounterName;
+        public string InstanceName;
+        public string FullName;
+    }
 
 	public class CounterThresholds
 	{
@@ -673,12 +681,12 @@ param(
 		$iStartOfCounterIndex = $FullCounterSamplePath.LastIndexOf("\") + 1#\\adt-e2k13aio1\logicaldisk(harddiskvolume1)\ <> avg. disk sec/read
 		$iEndOfCounterObjectIndex = $FullCounterSamplePath.IndexOf("(")
 		if($iEndOfCounterObjectIndex -eq -1){$iEndOfCounterObjectIndex = $FullCounterSamplePath.LastIndexOf("\")}
-		$obj = New-Object -TypeName PSObject 
-		$obj | Add-Member -Name ServerName -MemberType NoteProperty -Value ($FullCounterSamplePath.Substring(2,($iEndOfServerIndex - 2)))
-		$obj | Add-Member -Name ObjectName -MemberType NoteProperty -Value   ($FullCounterSamplePath.Substring($iEndOfServerIndex + 1, $iEndOfCounterObjectIndex - $iEndOfServerIndex - 1 ))
-		$obj | Add-Member -Name CounterName -MemberType NoteProperty -Value ($FullCounterSamplePath.Substring($FullCounterSamplePath.LastIndexOf("\") + 1))
-		$obj | Add-Member -Name InstanceName -MemberType NoteProperty -Value ($PerformanceCounterSample.InstanceName)
-		$obj | Add-Member -Name FullName -MemberType NoteProperty -Value ($FullCounterSamplePath)
+		$obj = New-Object PerformanceHealth.CounterNameObject
+		$obj.ServerName = ($FullCounterSamplePath.Substring(2,($iEndOfServerIndex - 2)))
+		$obj.ObjectName = ($FullCounterSamplePath.Substring($iEndOfServerIndex + 1, $iEndOfCounterObjectIndex - $iEndOfServerIndex - 1 ))
+		$obj.CounterName = ($FullCounterSamplePath.Substring($FullCounterSamplePath.LastIndexOf("\") + 1))
+		$obj.InstanceName = ($PerformanceCounterSample.InstanceName)
+		$obj.FullName = ($FullCounterSamplePath)
 		return $obj
 	}
 
@@ -730,7 +738,7 @@ param(
 	{
 		$counterNameObj = Get-FullCounterNameObject -PerformanceCounterSample $gPath.Group[0]
 		$counterDataObj = Build-ServerPerformanceObject_CounterData -CounterNameObject $counterNameObj 
-		$counterDataObj | Add-Member -Name RawData -MemberType NoteProperty -Value $gPath.Group
+		$counterDataObj.RawData = $gPath.Group
 		$counterDataObj.CounterType = $counterDataObj.RawData[0].CounterType
 		$tMasterObject.Add($counterDataObj)
 	}
@@ -742,7 +750,7 @@ param(
 	{
 		$cdo = Get-FullCounterNameObject -PerformanceCounterSample $svr.Group[0].RawData[0]
 		$svrData = Build-ServerPerformanceObject_Server -CounterNameObject $cdo
-		$svrData | Add-Member -Name CounterData -MemberType NoteProperty -Value ($svr.group)
+		$svrData.CounterData = $svr.group
 		$Script:convert_buildserver_Timefinder = Measure-Command{
 		$svrData.StartTime = ($svr.Group[0].RawData | Sort-Object TimeStamp | Select-Object -First 1).TimeStamp
 		$svrData.EndTime = ($svr.Group[0].RawData | Sort-Object TimeStamp | Select-Object -Last 1).TimeStamp

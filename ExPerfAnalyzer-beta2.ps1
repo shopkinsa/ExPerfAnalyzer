@@ -128,7 +128,6 @@ Main Object class
 [array]aMainObject
 	[ServerPerformanceObject]
 		[string]ServerName
-		[string]FileName
 		[DateTime]StartTime
 		[DateTime]EndTime
 		[AccuracyObject]Accuracy
@@ -638,8 +637,6 @@ Function Get-PerformanceDataFromFileLocal {
 
 			Write-Verbose ("[{0}]: Importing counters from file. File Size: {1}MB. File Name: {2}." -f [DateTime]::Now, ((Get-Item $file).Length / 1024 / 1024), $file)
 			$importCounterSamples = (Import-Counter @importParams).CounterSamples
-			
-			$importCounterSamples | Add-Member -Name FileName -Value $file -MemberType NoteProperty
 			Write-Verbose ("[{0}]: Finished Importing counters from file. File Name: {1}" -f [DateTime]::Now, $file)
 			$aCounterSamples.Add($importCounterSamples)
 		}
@@ -681,7 +678,6 @@ param(
 		$obj | Add-Member -Name ObjectName -MemberType NoteProperty -Value   ($FullCounterSamplePath.Substring($iEndOfServerIndex + 1, $iEndOfCounterObjectIndex - $iEndOfServerIndex - 1 ))
 		$obj | Add-Member -Name CounterName -MemberType NoteProperty -Value ($FullCounterSamplePath.Substring($FullCounterSamplePath.LastIndexOf("\") + 1))
 		$obj | Add-Member -Name InstanceName -MemberType NoteProperty -Value ($PerformanceCounterSample.InstanceName)
-		$obj | Add-Member -Name FileName -MemberType NoteProperty -Value ($PerformanceCounterSample.FileName)
 		$obj | Add-Member -Name FullName -MemberType NoteProperty -Value ($FullCounterSamplePath)
 		return $obj
 	}

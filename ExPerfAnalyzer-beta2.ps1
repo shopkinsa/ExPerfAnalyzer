@@ -813,10 +813,18 @@ param(
 		{
 			foreach($counterObj in $svrObj.CounterData)
 			{
-				$measured = $counterObj.RawData | Measure-Object -Property CookedValue -Maximum -Minimum -Average
+				# $measured = $counterObj.RawData | Measure-Object -Property CookedValue -Maximum -Minimum -Average
 
-				$counterObj.QuickSummaryStats.Min = $measured.Minimum
-				$counterObj.QuickSummaryStats.Max = $measured.Maximum
+				$min = [Int64]::MaxValue;
+				$max = [Int64]::MinValue;
+				foreach ($sample in $counterObj.RawData) 
+				{
+					if ($sample.CookedValue -lt $min) { $min = $sample.CookedValue; }
+					if ($sample.CookedValue -gt $max) { $max = $sample.CookedValue; }
+				}
+
+				$counterObj.QuickSummaryStats.Min = $min
+				$counterObj.QuickSummaryStats.Max = $max
 				$counterObj.QuickSummaryStats.StartTime = $counterObj.RawData[0].TimeStamp
 				$counterObj.QuickSummaryStats.EndTime = $counterObj.RawData[-1].TimeStamp
 				$counterObj.QuickSummaryStats.Duration = New-TimeSpan $($counterObj.QuickSummaryStats.StartTime) $($counterObj.QuickSummaryStats.EndTime)
@@ -832,12 +840,12 @@ param(
 					$numOpsDif = $counterObj.RawData[-1].SecondValue - $counterObj.RawData[0].SecondValue 
 					if($frequency -ne 0 -and $numTicksDiff -ne 0 -and $numOpsDif -ne 0)
 					{
-						$counterObj.QuickSummaryStats.Avg = (($numTicksDiff / $frequency) / $numOpsDif)
+						$counterObj.QuickSummaryStats.Avg = ($counterObj.RawData | Measure-Object -Property CookedValue -Average).Average
 					}
 				}
 				else
 				{
-					$counterObj.QuickSummaryStats.Avg = $measured.Average
+					$counterObj.QuickSummaryStats.Avg = $sum / $counterObj.RawData.Count;
 				}
 
 			}

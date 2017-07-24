@@ -54,7 +54,7 @@ namespace PerformanceHealth
 		public System.DateTime EndTime;
 		public AccuracyObject Accuracy;
 		public HealthReport HealthReport;
-		//public System.Array CounterData;
+		public object[] CounterData;
 	}
 	
 	public class CounterDataObject
@@ -72,9 +72,17 @@ namespace PerformanceHealth
 		public DisplayOptionsObject DisplayOptions;
 		public CounterThresholds Threshold;
 		public QuickSummaryStatsObject QuickSummaryStats;
-		//public System.Array RawData; 
+		public object[] RawData; 
 	}
 
+	public class CounterNameObject
+    {
+        public string ServerName;
+        public string ObjectName;
+        public string CounterName;
+        public string InstanceName;
+        public string FullName;
+    }
 
 	public class CounterThresholds
 	{
@@ -673,12 +681,12 @@ param(
 		$iStartOfCounterIndex = $FullCounterSamplePath.LastIndexOf("\") + 1#\\adt-e2k13aio1\logicaldisk(harddiskvolume1)\ <> avg. disk sec/read
 		$iEndOfCounterObjectIndex = $FullCounterSamplePath.IndexOf("(")
 		if($iEndOfCounterObjectIndex -eq -1){$iEndOfCounterObjectIndex = $FullCounterSamplePath.LastIndexOf("\")}
-		$obj = New-Object -TypeName PSObject 
-		$obj | Add-Member -Name ServerName -MemberType NoteProperty -Value ($FullCounterSamplePath.Substring(2,($iEndOfServerIndex - 2)))
-		$obj | Add-Member -Name ObjectName -MemberType NoteProperty -Value   ($FullCounterSamplePath.Substring($iEndOfServerIndex + 1, $iEndOfCounterObjectIndex - $iEndOfServerIndex - 1 ))
-		$obj | Add-Member -Name CounterName -MemberType NoteProperty -Value ($FullCounterSamplePath.Substring($FullCounterSamplePath.LastIndexOf("\") + 1))
-		$obj | Add-Member -Name InstanceName -MemberType NoteProperty -Value ($PerformanceCounterSample.InstanceName)
-		$obj | Add-Member -Name FullName -MemberType NoteProperty -Value ($FullCounterSamplePath)
+		$obj = New-Object PerformanceHealth.CounterNameObject
+		$obj.ServerName = ($FullCounterSamplePath.Substring(2,($iEndOfServerIndex - 2)))
+		$obj.ObjectName = ($FullCounterSamplePath.Substring($iEndOfServerIndex + 1, $iEndOfCounterObjectIndex - $iEndOfServerIndex - 1 ))
+		$obj.CounterName = ($FullCounterSamplePath.Substring($FullCounterSamplePath.LastIndexOf("\") + 1))
+		$obj.InstanceName = ($PerformanceCounterSample.InstanceName)
+		$obj.FullName = ($FullCounterSamplePath)
 		return $obj
 	}
 
@@ -723,30 +731,6 @@ param(
 		return $serverPerfObject
 	}
 
-	Function Add-ServerPerformanceObject_Value {
-	[CmdletBinding()]
-	[OutputType([System.Collections.Generic.List[System.Object]])]
-	param(
-		[Parameter(Mandatory=$true)][array]$CounterSampleData
-	)
-		Write-Verbose("[{0}] : Calling Add-ServerPerformanceObject_Value" -f [system.dateTime]::Now)
-		$values = New-Object System.Collections.Generic.List[System.Object]
-		$measure_loop = Measure-Command {
-			foreach($csd in $CounterSampleData)
-			{
-				$tRawData = New-Object -TypeName PerformanceHealth.RawDataObject
-				$tRawData.TimeStamp = $csd.TimeStamp 
-				$tRawData.CookedValue = $csd.CookedValue
-				$tRawData | Add-Member -Name TimeBase -MemberType NoteProperty -Value $csd.TimeBase
-				$tRawData | Add-Member -Name RawValue -MemberType NoteProperty -Value $csd.RawValue 
-				$tRawData | Add-Member -Name SecondValue -MemberType NoteProperty -Value $csd.SecondValue 
-				$values.Add($tRawData)
-			}
-		}
-		Write-Verbose("[{0}] : Took {1} seconds to process {2} items" -f [datetime]::Now, $measure_loop.Seconds, $CounterSampleData.Count)
-		return $values
-	}
-
 	$Script:convertMeasureTime = Measure-Command{
 	$tMasterObject = New-Object System.Collections.Generic.List[System.Object]
 		$Script:convert_Total_PathGroup = Measure-Command{
@@ -754,7 +738,7 @@ param(
 	{
 		$counterNameObj = Get-FullCounterNameObject -PerformanceCounterSample $gPath.Group[0]
 		$counterDataObj = Build-ServerPerformanceObject_CounterData -CounterNameObject $counterNameObj 
-		$counterDataObj | Add-Member -Name RawData -MemberType NoteProperty -Value $gPath.Group
+		$counterDataObj.RawData = $gPath.Group
 		$counterDataObj.CounterType = $counterDataObj.RawData[0].CounterType
 		$tMasterObject.Add($counterDataObj)
 	}
@@ -766,7 +750,7 @@ param(
 	{
 		$cdo = Get-FullCounterNameObject -PerformanceCounterSample $svr.Group[0].RawData[0]
 		$svrData = Build-ServerPerformanceObject_Server -CounterNameObject $cdo
-		$svrData | Add-Member -Name CounterData -MemberType NoteProperty -Value ($svr.group)
+		$svrData.CounterData = $svr.group
 		$Script:convert_buildserver_Timefinder = Measure-Command{
 		$svrData.StartTime = ($svr.Group[0].RawData | Sort-Object TimeStamp | Select-Object -First 1).TimeStamp
 		$svrData.EndTime = ($svr.Group[0].RawData | Sort-Object TimeStamp | Select-Object -Last 1).TimeStamp
@@ -829,10 +813,18 @@ param(
 		{
 			foreach($counterObj in $svrObj.CounterData)
 			{
-				$measured = $counterObj.RawData | Measure-Object -Property CookedValue -Maximum -Minimum -Average
+				# $measured = $counterObj.RawData | Measure-Object -Property CookedValue -Maximum -Minimum -Average
 
-				$counterObj.QuickSummaryStats.Min = $measured.Minimum
-				$counterObj.QuickSummaryStats.Max = $measured.Maximum
+				$min = [Int64]::MaxValue;
+				$max = [Int64]::MinValue;
+				foreach ($sample in $counterObj.RawData) 
+				{
+					if ($sample.CookedValue -lt $min) { $min = $sample.CookedValue; }
+					if ($sample.CookedValue -gt $max) { $max = $sample.CookedValue; }
+				}
+
+				$counterObj.QuickSummaryStats.Min = $min
+				$counterObj.QuickSummaryStats.Max = $max
 				$counterObj.QuickSummaryStats.StartTime = $counterObj.RawData[0].TimeStamp
 				$counterObj.QuickSummaryStats.EndTime = $counterObj.RawData[-1].TimeStamp
 				$counterObj.QuickSummaryStats.Duration = New-TimeSpan $($counterObj.QuickSummaryStats.StartTime) $($counterObj.QuickSummaryStats.EndTime)
@@ -848,12 +840,12 @@ param(
 					$numOpsDif = $counterObj.RawData[-1].SecondValue - $counterObj.RawData[0].SecondValue 
 					if($frequency -ne 0 -and $numTicksDiff -ne 0 -and $numOpsDif -ne 0)
 					{
-						$counterObj.QuickSummaryStats.Avg = (($numTicksDiff / $frequency) / $numOpsDif)
+						$counterObj.QuickSummaryStats.Avg = ($counterObj.RawData | Measure-Object -Property CookedValue -Average).Average
 					}
 				}
 				else
 				{
-					$counterObj.QuickSummaryStats.Avg = $measured.Average
+					$counterObj.QuickSummaryStats.Avg = $sum / $counterObj.RawData.Count;
 				}
 
 			}

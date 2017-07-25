@@ -842,7 +842,7 @@ param(
 				{
 					$numTicksDiff = $counterObj.LastSample.RawValue - $counterObj.FirstSample.RawValue 
 					$frequency = $counterObj.LastSample.TimeBase
-					$numOpsDif = $counterObj.LastSample.SecondValue - $counterObj.RawData.FirstSample.SecondValue 
+					$numOpsDif = $counterObj.LastSample.SecondValue - $counterObj.FirstSample.SecondValue 
 					if($frequency -ne 0 -and $numTicksDiff -ne 0 -and $numOpsDif -ne 0)
 					{
 						$counterObj.QuickSummaryStats.Avg = (($numTicksDiff / $frequency) / $numOpsDif)

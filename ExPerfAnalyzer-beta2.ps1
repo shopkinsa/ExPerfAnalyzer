@@ -26,6 +26,8 @@ ExPerfAnalzer of blg files.
 
 #Class
 Add-Type @"
+using System.Collections.Generic;
+using System.Linq;
 
 namespace PerformanceHealth
 {
@@ -72,7 +74,10 @@ namespace PerformanceHealth
 		public DisplayOptionsObject DisplayOptions;
 		public CounterThresholds Threshold;
 		public QuickSummaryStatsObject QuickSummaryStats;
-		public object[] RawData; 
+		public object[] AllRawData;
+		public IEnumerable<object> RawData { get { return AllRawData.Skip(1); } }
+		public object FirstSample { get { return RawData.First(); } }
+		public object LastSample { get { return RawData.Last(); } }
 	}
 
 	public class CounterNameObject
@@ -738,8 +743,8 @@ param(
 	{
 		$counterNameObj = Get-FullCounterNameObject -PerformanceCounterSample $gPath.Group[0]
 		$counterDataObj = Build-ServerPerformanceObject_CounterData -CounterNameObject $counterNameObj 
-		$counterDataObj.RawData = $gPath.Group
-		$counterDataObj.CounterType = $counterDataObj.RawData[0].CounterType
+		$counterDataObj.AllRawData = $gPath.Group
+		$counterDataObj.CounterType = $counterDataObj.FirstSample.CounterType
 		$tMasterObject.Add($counterDataObj)
 	}
 	}
@@ -748,7 +753,7 @@ param(
 	$Script:convert_buildServer_measuregroupserver = Measure-Command{ $serverGroup = $tMasterObject | group ServerName}
 	foreach($svr in $serverGroup)
 	{
-		$cdo = Get-FullCounterNameObject -PerformanceCounterSample $svr.Group[0].RawData[0]
+		$cdo = Get-FullCounterNameObject -PerformanceCounterSample ($svr.Group[0].RawData | Select-Object -First 1)
 		$svrData = Build-ServerPerformanceObject_Server -CounterNameObject $cdo
 		$svrData.CounterData = $svr.group
 		$Script:convert_buildserver_Timefinder = Measure-Command{
@@ -825,8 +830,8 @@ param(
 
 				$counterObj.QuickSummaryStats.Min = $min
 				$counterObj.QuickSummaryStats.Max = $max
-				$counterObj.QuickSummaryStats.StartTime = $counterObj.RawData[0].TimeStamp
-				$counterObj.QuickSummaryStats.EndTime = $counterObj.RawData[-1].TimeStamp
+				$counterObj.QuickSummaryStats.StartTime = $counterObj.FirstSample.TimeStamp
+				$counterObj.QuickSummaryStats.EndTime = $counterObj.LastSample.TimeStamp
 				$counterObj.QuickSummaryStats.Duration = New-TimeSpan $($counterObj.QuickSummaryStats.StartTime) $($counterObj.QuickSummaryStats.EndTime)
 				#Calculate Averages 
 				#Average calculation for Average counters taken from these references:
@@ -835,17 +840,17 @@ param(
 				
 				if($counterObj.CounterType -like "AverageTimer*")
 				{
-					$numTicksDiff = $counterObj.RawData[-1].RawValue - $counterObj.RawData[0].RawValue 
-					$frequency = $counterObj.RawData[-1].TimeBase
-					$numOpsDif = $counterObj.RawData[-1].SecondValue - $counterObj.RawData[0].SecondValue 
+					$numTicksDiff = $counterObj.LastSample.RawValue - $counterObj.FirstSample.RawValue 
+					$frequency = $counterObj.LastSample.TimeBase
+					$numOpsDif = $counterObj.LastSample.SecondValue - $counterObj.RawData.FirstSample.SecondValue 
 					if($frequency -ne 0 -and $numTicksDiff -ne 0 -and $numOpsDif -ne 0)
 					{
-						$counterObj.QuickSummaryStats.Avg = ($counterObj.RawData | Measure-Object -Property CookedValue -Average).Average
+						$counterObj.QuickSummaryStats.Avg = (($numTicksDiff / $frequency) / $numOpsDif)
 					}
 				}
 				else
 				{
-					$counterObj.QuickSummaryStats.Avg = $sum / $counterObj.RawData.Count;
+					$counterObj.QuickSummaryStats.Avg = ($counterObj.RawData | Measure-Object -Property CookedValue -Average).Average
 				}
 
 			}

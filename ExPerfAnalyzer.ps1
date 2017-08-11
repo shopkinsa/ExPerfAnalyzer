@@ -874,6 +874,9 @@ param(
 	Add-Line("{0,-18} : {1}" -f "Start Time", $ServerObject.StartTime)
 	Add-Line("{0,-18} : {1}" -f "End Time",$ServerObject.EndTime)
 	Add-Line("{0,-18} : {1}" -f "Duration",(New-TimeSpan $($ServerObject.StartTime) $($ServerObject.EndTime)).ToString())
+	#Setup the output file 
+	
+	$outFile = $ServerObject.FileName + "_Quick_Summary.txt"
 
 	$groupCounterCategory = $ServerObject.CounterData | Group-Object CounterCategory | ?{$_.Name -ne "" -and $_.Name -ne "Process"} | Sort-Object Name
 	$groupCounterCategoryProcess = $ServerObject.CounterData | Group-Object CounterCategory | ?{$_.Name -eq "Process"}
@@ -1002,8 +1005,8 @@ param(
 
 
 	}
-	$Script:displayString
-
+	$Script:displayString | Out-File -FilePath $outFile -Force
+	&$outFile
 }
 
 
@@ -1093,7 +1096,7 @@ Function Main {
 			Write-Verbose("Single File appears to be detected. Running against file {0}." -f $PerfmonFile)
 			$script:perffromlocalfile = Measure-Command{ $rawLocalData = Get-PerformanceDataFromFileLocal -FullPath $PerfmonFile -Counters (Get-CountersFromXml -xmlCounters $xmlCountersToAnalyze -IncludeWildForServers $true) -MaxSamples $MaxSamples -StartTime $StartTime -EndTime $EndTime}
 			$script:convertTotal = Measure-Command{ $mainObject = Convert-PerformanceCounterSampleObjectToServerPerformanceObjectWithQuickAnalyze -RawData $rawLocalData.CounterSamples -XmlList $xmlCountersToAnalyze  -FileName $rawLocalData.FileName -ReadTimeSpan $rawLocalData.ReadingFileTime}
-			$script:displayResults = Output-QuickSummaryDetails -ServerObject $mainObject 
+			Output-QuickSummaryDetails -ServerObject $mainObject 
 			break;
 		}
 
@@ -1105,4 +1108,3 @@ Function Main {
 
 
 Main
-$script:displayResults

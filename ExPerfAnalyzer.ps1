@@ -79,6 +79,7 @@ namespace PerformanceHealth
         public string FullName;
     }
 
+
 	public class CounterThresholds
 	{
 		public double MaxValue;
@@ -626,6 +627,7 @@ Function Get-PerformanceDataFromFileLocal {
 		[parameter(mandatory=$true)][DateTime]$EndTime
 	)
 
+
 	Write-Verbose ("[{0}]: Passed {1} files." -f [DateTime]::Now, $FullPath.Count)
 	[System.Collections.Generic.List[PerformanceHealth.PerfFileDataInfo]]$aPerfFileDataInfo = New-Object System.Collections.Generic.List[PerformanceHealth.PerfFileDataInfo]
 	if($FullPath.Count -gt 0)
@@ -645,10 +647,12 @@ Function Get-PerformanceDataFromFileLocal {
 				Verbose = $false
 			}
 
+
 			if($Counters -ne $null -and $Counters.Count -gt 0)
 			{
 				$importParams.Add("Counter", $Counters)
 			}
+
 
 			Write-Verbose ("[{0}]: Importing counters from file. File Size: {1}MB. File Name: {2}." -f [DateTime]::Now, ((Get-Item $file).Length / 1024 / 1024), $file)
 			#$importCounterSamples = (Import-Counter @importParams).CounterSamples
@@ -996,6 +1000,7 @@ param(
 	$Script:displayString | Out-File -FilePath $outFile -Force
 	&$outFile
 }
+
 
 
 

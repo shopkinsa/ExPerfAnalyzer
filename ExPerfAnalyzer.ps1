@@ -1,508 +1,1103 @@
-﻿<#
-Name:
-  ExPerfAnalyzer.ps1
+﻿[CmdletBinding()]
+Param(
+#[Parameter(Mandatory=$true,ParameterSetName="FileDirectory")][string]$PerfmonFileDirectory,
+[Parameter(Mandatory=$false,ParameterSetName="FileDirectory")]
+	[Parameter(ParameterSetName="SingleFile")][int64]$MaxSamples = [Int64]::MaxValue,
+[Parameter(Mandatory=$false,ParameterSetName="FileDirectory")]
+	[Parameter(ParameterSetName="SingleFile")][DateTime]$StartTime = [DateTime]::MinValue,
+[Parameter(Mandatory=$false,ParameterSetName="FileDirectory")]
+	[Parameter(ParameterSetName="SingleFile")][DateTime]$EndTime = [DateTime]::MaxValue,
+[Parameter(Mandatory=$true,ParameterSetName="SingleFile")][string]$PerfmonFile
+)
+$ScriptVersion = "v2.1"
+$ShowNProcesses = 10
 
-Description:
-  Parses perfmon .blg files from an Exchange server captured with ExPerfWiz.ps1
-  and produces a high-level summary in a text file.
+#Class
+Add-Type @"
+using System; 
+using System.Collections.Generic;
+using System.Linq;
 
-Author:
-  Matthew Huynh (mahuynh@microsoft.com)
+namespace PerformanceHealth
+{
+	public class HealthReport
+	{
+		public string ChangeTime;
+		public string Status;
+		public string Reason;
+		public string DisplayInfo;
+		//public System.Array ChangeLog; 
+	}
 
-Use:
-  .\ExPerfAnalyzer.ps1 EXSERVER01_FULL_000001.BLG
+	public class HealthReportEntries
+	{
+		public string ChangeTime;
+		public string Status;
+		public string Reason;
+		public string DisplayInfo; 
+	}
 
-Changelog:
-  See https://github.com/Microsoft/ExPerfAnalyzer.
+	public class ServerPerformanceObject
+	{
+		public string ServerName;
+		public string FileName; 
+		public System.DateTime StartTime;
+		public System.DateTime EndTime;
+		public AccuracyObject Accuracy;
+		public HealthReport HealthReport;
+		public object[] CounterData;
+		public System.TimeSpan ReadTime;
+	}
+	
+	public class CounterDataObject
+	{
+		public string FullName;
+		public string ServerName;
+		public string ObjectName;
+		public string InstanceName;
+		public string CounterName;
+		public string CounterCategory;
+		public string DetectIssuesType;
+		public string CounterType; 
+		public HealthReport HealthReport;
+		public AccuracyObject Accuracy;
+		public DisplayOptionsObject DisplayOptions;
+		public CounterThresholds Threshold;
+		public QuickSummaryStatsObject QuickSummaryStats;
+		public object[] AllRawData;
+		public IEnumerable<object> RawData { get { return AllRawData.Skip(1); } }
+		public object FirstSample { get { return RawData.First(); } }
+		public object LastSample { get { return RawData.Last(); } }
+	}
+
+	public class CounterNameObject
+    {
+        public string ServerName;
+        public string ObjectName;
+        public string CounterName;
+        public string InstanceName;
+        public string FullName;
+    }
+
+
+	public class CounterThresholds
+	{
+		public double MaxValue;
+		public double WarningValue;
+		public double AverageValue; 
+	}
+
+
+
+	public class DisplayOptionsObject 
+	{
+		public double FormatDivider;
+		public string FormatString;
+	}
+
+	public class QuickSummaryStatsObject
+	{
+		public double Avg;
+		public double Min;
+		public double Max;
+		public System.DateTime StartTime;
+		public System.DateTime EndTime; 
+		public System.TimeSpan Duration; 
+	}
+
+	/*
+	public class RawDataObject
+	{
+		public System.DateTime TimeStamp;
+		//public UInt64 TimeBase; 
+		//public UInt64 RawValue;
+		//public UInt64 SecondValue;
+		public double CookedValue; 
+	}
+	*/
+	public class AccuracyObject
+	{
+		public double Percentage;
+		public int SumDatPoints;
+		public int EstimatedDataPoints; 
+	}
+
+	public class PerfFileDataInfo
+	{
+		public object[] CounterSamples;
+		public TimeSpan ReadingFileTime;
+		public string FileName;
+	}
+
+}
+
+"@ 
+
+<#
+Main Object class 
+
+[array]aMainObject
+	[ServerPerformanceObject]
+		[string]ServerName
+		[DateTime]StartTime
+		[DateTime]EndTime
+		[AccuracyObject]Accuracy
+			[double]Percentage
+			[int]SumDataPoints
+			[int]EstimatedDataPoints		
+		[HealthReport]
+			[string/enum]Status
+			[string]ChangeTime
+			[string]Reason
+			[string]DisplayInfo
+			[Array]ChangeLog
+				[HealthReportEntries]
+					[string]ChangeTime
+					[string/enum]Status
+					[string]Reason
+					[string]DisplayInfo
+		[array]CounterData
+			[CounterDataObject]
+				[string]FullName
+				[string]ServerName
+				[string]ObjectName
+				[string]InstanceName
+				[string]CounterName
+				[string]CounterCategory
+				[string]DetectIssuesType
+				[string]CounterType
+				[HealthReport]
+				[AccuracyObject]Accuracy
+				[DisplayOptions]
+					[string]FormatString
+					[double]FormatDivider
+				[CounterThresholds]Threshold
+					[double]MaxValue
+					[double]WarningValue
+					[double]AverageValue
+				[QuickSummaryStats]
+					[double]Avg
+					[double]Min
+					[double]Max
+					[DateTime]StartTime
+					[DateTime]EndTime
+					[TimeSpan]Duration
+				[Array]RawData
+					[DateTime]TimeStamp
+					[UInt64]TimeBase
+					[UInt64]RawValue
+					[UInt64]SecondValue
+					[Double]CookedValue
+
 #>
 
-Param(
-  [Parameter(Mandatory=$False,Position=1)]
-  [string]$PerfmonFilePath,
-  [Parameter(Mandatory=$False,Position=2)]
-  [string[]]$Servers
-  )
 
-# if you start the script with no parameters, it will register itself as a handler for perfmon BLG files.
-if ($PerfmonFilePath.Trim().Length -eq 0) {
-    New-PSDrive -PSProvider Registry -Root HKEY_CLASSES_ROOT -Name HKCR | Out-Null
-    $scriptPath = $MyInvocation.MyCommand.Path
-    $defaultCommand = 'powershell.exe -command "& ' + "'" + $scriptPath + "'" + " '%1'" + '"'
-    Write-Debug $defaultCommand
-    $newRegKey = New-Item HKCR:\Diagnostic.Perfmon.Document\shell\ExPerfAnalyzer\command -Force -Value $defaultCommand
-    $string = "ExPerfAnalyzer {0}registered itself as a shell handler for perfmon .blg files."
-    if ($newRegKey -ne $null) {
-        Write-Host -ForegroundColor Green ($string -f "")
-    } else {
-        Write-Error ($string -f "failed to ")
-    }
-    exit
-}
+<#
+Format of the xml counters 
+<Counter Name = "">
+	<Category></Category>
+	<CounterSetName></CounterSetName>
+	<CounterName></CounterName>
+	<DisplayOptions>
+		<FormatDivider></FormatDivider>
+		<FormatString></FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
 
-# declare script variables
-$scriptVersion = "0.2.0"
-$TOP_N_PROCESSES = 10 # show top 10 by default. change this if you want more or less.
-$summary = @()
-$totalSamples = 0
-$earliestTimestamp = [System.DateTime]::MaxValue
-$latestTimestamp = [System.DateTime]::MinValue
-[int] $sampleInterval = 0 # this will be an average amongst all the samples
-$outStr = ""
-$detailLineStrLength = 48
-$columnWidth = 12
-$perfmonFile = Get-ChildItem $PerfmonFilePath -ErrorAction Stop
-$perfmonFilename = $perfmonFile.Name
-$outFile = $PerfmonFilePath + "-Summary.txt"
-[string[]] $supportedFiletypes = ".blg", ".csv", ".tsv"
 
-if ($perfmonFile.Extension -inotin $supportedFiletypes) {
-    Write-Error ("Please input a proper perfmon file (" + ($supportedFiletypes -join ", ") + ").")
-    exit
-}
+<Counter Name = "\System\Context Switches/sec">
+	<Category>Processor</Category>
+	<CounterSetName>System</CounterSetName>
+	<CounterName>Context Switches/sec</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N0}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>90000</Average>
+		<Maxvalue>200000</Maxvalue>
+		<WarningValue>150000</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>NormalGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
 
-# if no Servers param, detect the servers in the BLG
-if ($Servers -eq $null) {
-    $serversDetectionTime = Measure-Command {
-        Write-Host -ForegroundColor Green "Detecting server name..."
-        [string] $firstCounter = (Import-Counter $PerfmonFilePath -Counter "\\*\Processor(_Total)\% Processor Time")[0].CounterSamples.Path
-        $Servers = ($firstCounter -split '\\')[2]
-        Write-Debug "Detected server: $Servers"
-    }
-    Write-Host "  completed in $("{0:N1}" -f $serversDetectionTime.TotalSeconds) seconds."
-}
 
-# the fun starts here!
-$counters = @()
-$topNcounters = @()
-$topNSummary = @()
-Write-Host -ForegroundColor Green "Initializing counter list..."
-$counterInitTime = Measure-Command {
-# define our enum so that the output can be ordered by Category
-Add-Type -TypeDefinition @"
-    public enum Category
-    {
-        Processor=0,
-        Memory,
-        NetworkInterface,
-        Disk,
-        MSExchangeADAccess,
-        ASPNET,
-        MSExchangeIS,
-        HttpProxy,
-        RpcClientAccess,
-        MSExchangeActiveSync,
-        TopNProcesses
-    }
+
+#>
+
+$xmlCountersToAnalyze = [xml]@"
+<Counters>
+<Counter Name = "\LogicalDisk(*)\Avg. Disk sec/Read">
+	<Category>Disk</Category>
+	<CounterSetName>LogicalDisk</CounterSetName>
+	<CounterName>Avg. Disk sec/Read</CounterName>
+	<DisplayOptions>
+		<FormatDivider>0.001</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0.020</Average>
+		<Maxvalue>0.001</Maxvalue>
+		<WarningValue>0.001</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>DeepGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\LogicalDisk(*)\Avg. Disk sec/Write">
+	<Category>Disk</Category>
+	<CounterSetName>LogicalDisk</CounterSetName>
+	<CounterName>Avg. Disk sec/Write</CounterName>
+	<DisplayOptions>
+		<FormatDivider>0.001</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0.020</Average>
+		<Maxvalue>0.001</Maxvalue>
+		<WarningValue>0.001</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>DeepGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\LogicalDisk(*)\Avg. Disk sec/Transfer">
+	<Category>Disk</Category>
+	<CounterSetName>LogicalDisk</CounterSetName>
+	<CounterName>Avg. Disk sec/Transfer</CounterName>
+	<DisplayOptions>
+		<FormatDivider>0.001</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0</Average>
+		<Maxvalue>0</Maxvalue>
+		<WarningValue>0</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>None</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\LogicalDisk(*)\Disk Transfers/sec">
+	<Category>Disk</Category>
+	<CounterSetName>LogicalDisk</CounterSetName>
+	<CounterName>Disk Transfers/sec</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0</Average>
+		<Maxvalue>0</Maxvalue>
+		<WarningValue>0</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>None</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\LogicalDisk(*)\Disk Bytes/sec">
+	<Category>Disk</Category>
+	<CounterSetName>LogicalDisk</CounterSetName>
+	<CounterName>Disk Bytes/sec</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1024</FormatDivider>
+		<FormatString>{0:N0}KB</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0</Average>
+		<Maxvalue>0</Maxvalue>
+		<WarningValue>0</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>None</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\LogicalDisk(*)\Avg. Disk Queue Length">
+	<Category>Disk</Category>
+	<CounterSetName>LogicalDisk</CounterSetName>
+	<CounterName>Avg. Disk Queue Length</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N2}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0</Average>
+		<Maxvalue>0</Maxvalue>
+		<WarningValue>0</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>None</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\LogicalDisk(*)\% Idle Time">
+	<Category>Disk</Category>
+	<CounterSetName>LogicalDisk</CounterSetName>
+	<CounterName>% Idle Time</CounterName>
+	<DisplayOptions>
+		<FormatDivider>100</FormatDivider>
+		<FormatString>{0:p1}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0</Average>
+		<Maxvalue>0</Maxvalue>
+		<WarningValue>0</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>None</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\Memory\Available MBytes">
+	<Category>Memory</Category>
+	<CounterSetName>Memory</CounterSetName>
+	<CounterName>Available MBytes</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N0}MB</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>1536</Average>
+		<Maxvalue>512</Maxvalue>
+		<WarningValue>1024</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>NormalLessThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\Processor(*)\% Processor Time">
+	<Category>Processor</Category>
+	<CounterSetName>Processor</CounterSetName>
+	<CounterName>% Processor Time</CounterName>
+	<DisplayOptions>
+		<FormatDivider>100</FormatDivider>
+		<FormatString>{0:p1}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>75</Average>
+		<Maxvalue>95</Maxvalue>
+		<WarningValue>85</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>NormalGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\Process(*)\% Processor Time">
+	<Category>Process</Category>
+	<CounterSetName>Process</CounterSetName>
+	<CounterName>% Processor Time</CounterName>
+	<DisplayOptions>
+		<FormatDivider>100</FormatDivider>
+		<FormatString>{0:p1}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\Process(*)\Working Set">
+	<Category>Process</Category>
+	<CounterSetName>Process</CounterSetName>
+	<CounterName>Working Set</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1048576</FormatDivider>
+		<FormatString>{0:N0}MB</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\System\Processor Queue Length">
+	<Category>Processor</Category>
+	<CounterSetName>System</CounterSetName>
+	<CounterName>Processor Queue Length</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N0}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>2</Average>
+		<Maxvalue>200</Maxvalue>
+		<WarningValue>120</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>NormalGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange ADAccess Domain Controllers(*)\LDAP Search Time">
+	<Category>MSExchangeADAccess</Category>
+	<CounterSetName>MSExchange ADAccess Domain Controllers</CounterSetName>
+	<CounterName>LDAP Search Time</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange ADAccess Domain Controllers(*)\LDAP Read Time">
+	<Category>MSExchangeADAccess</Category>
+	<CounterSetName>MSExchange ADAccess Domain Controllers</CounterSetName>
+	<CounterName>LDAP Read Time</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\ASP.NET Apps v4.0.30319(*)\Requests Executing">
+	<Category>ASPNET</Category>
+	<CounterSetName>ASP.NET Apps v4.0.30319</CounterSetName>
+	<CounterName>Requests Executing</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N0}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchangeIS Client Type(*)\RPC Average Latency">
+	<Category>MSExchangeIS</Category>
+	<CounterSetName>MSExchangeIS Client Type</CounterSetName>
+	<CounterName>RPC Average Latency</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchangeIS Client Type(*)\RPC Operations/sec">
+	<Category>MSExchangeIS</Category>
+	<CounterSetName>MSExchangeIS Client Type</CounterSetName>
+	<CounterName>RPC Operations/sec</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N0}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchangeIS Store(*)\Active mailboxes">
+	<Category>MSExchangeIS</Category>
+	<CounterSetName>MSExchangeIS Store</CounterSetName>
+	<CounterName>Active mailboxes</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N0}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange HttpProxy(*)\Average ClientAccess Server Processing Latency">
+	<Category>HttpProxy</Category>
+	<CounterSetName>MSExchange HttpProxy</CounterSetName>
+	<CounterName>Average ClientAccess Server Processing Latency</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange RpcClientAccess\RPC Averaged Latency">
+	<Category>RpcClientAccess</Category>
+	<CounterSetName>MSExchange RpcClientAccess</CounterSetName>
+	<CounterName>RPC Averaged Latency</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange RpcClientAccess\Active User Count">
+	<Category>RpcClientAccess</Category>
+	<CounterSetName>MSExchange RpcClientAccess</CounterSetName>
+	<CounterName>Active User Count</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N0}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange RpcClientAccess\RPC Requests">
+	<Category>RpcClientAccess</Category>
+	<CounterSetName>MSExchange RpcClientAccess</CounterSetName>
+	<CounterName>RPC Requests</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N0}</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average></Average>
+		<Maxvalue></Maxvalue>
+		<WarningValue></WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main></Main>
+	</MonitorChecks>
+</Counter>
+</Counters>
 "@
 
-######################
-# PROCESSOR COUNTERS #
-######################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Processor;
-                                         'Name'="\Processor(*)\% Processor Time";
-                                         'FormatDivider'=100;
-                                         'FormatString'="{0:p1}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Processor;
-                                         'Name'="\System\Processor Queue Length";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-###################
-# MEMORY COUNTERS #
-###################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Memory;
-                                         'Name'="\Memory\Available Bytes";
-                                         'FormatDivider'=1MB;
-                                         'FormatString'="{0:N0}MB";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Memory;
-                                         'Name'="\Memory\% Committed Bytes In Use";
-                                         'FormatDivider'=100;
-                                         'FormatString'="{0:p0}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Memory;
-                                         'Name'="\Memory\Pool Paged Bytes";
-                                         'FormatDivider'=1MB;
-                                         'FormatString'="{0:N0}MB";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Memory;
-                                         'Name'="\Memory\Pool Nonpaged Bytes";
-                                         'FormatDivider'=1MB;
-                                         'FormatString'="{0:N0}MB";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Memory;
-                                         'Name'="\Memory\Commit Limit";
-                                         'FormatDivider'=1MB;
-                                         'FormatString'="{0:N0}MB";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Memory;
-                                         'Name'="\Memory\Cache Bytes";
-                                         'FormatDivider'=1MB;
-                                         'FormatString'="{0:N0}MB";}
-#########################
-# NETWORK INT. COUNTERS #
-#########################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::NetworkInterface;
-                                         'Name'="\Network Interface(*)\Current Bandwidth";
-                                         'FormatDivider'=1000000;
-                                         'FormatString'="{0:N0}Mb";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::NetworkInterface;
-                                         'Name'="\Network Interface(*)\Bytes Total/sec";
-                                         'FormatDivider'=1KB;
-                                         'FormatString'="{0:N0}KB";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::NetworkInterface;
-                                         'Name'="\Network Interface(*)\Packets/sec";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::NetworkInterface;
-                                         'Name'="\Network Interface(*)\Packets Received Discarded";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::NetworkInterface;
-                                         'Name'="\Network Interface(*)\Packets Received Errors";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-#################
-# DISK COUNTERS #
-#################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
-                                         'Name'="\LogicalDisk(*)\Avg. Disk sec/Transfer";
-                                         'FormatDivider'=0.001;
-                                         'FormatString'="{0:N1}ms";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
-                                         'Name'="\LogicalDisk(*)\Disk Transfers/sec";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N1}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
-                                         'Name'="\LogicalDisk(*)\Disk Bytes/sec";
-                                         'FormatDivider'=1KB;
-                                         'FormatString'="{0:N0}KB";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
-                                         'Name'="\LogicalDisk(*)\Avg. Disk Queue Length";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N2}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
-                                         'Name'="\LogicalDisk(*)\% Idle Time";
-                                         'FormatDivider'=100;
-                                         'FormatString'="{0:p1}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
-                                         'Name'="\LogicalDisk(*)\Avg. Disk sec/Read";
-                                         'FormatDivider'=0.001;
-                                         'FormatString'="{0:N1}ms";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::Disk;
-                                         'Name'="\LogicalDisk(*)\Avg. Disk sec/Write";
-                                         'FormatDivider'=0.001;
-                                         'FormatString'="{0:N1}ms";}
-###############################
-# MSExchangeADAccess COUNTERS #
-###############################
-# these counters throw an CounterPathIsInvalid exception even though they succeed... unsure why.
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeADAccess;
-                                         'Name'="\MSExchange ADAccess Domain Controllers(*)\LDAP Search Time";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N1}ms";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeADAccess;
-                                         'Name'="\MSExchange ADAccess Domain Controllers(*)\LDAP Read Time";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N1}ms";}
-####################
-# ASP.NET COUNTERS #
-####################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::ASPNET;
-                                         'Name'="\ASP.NET Apps v4.0.30319(*)\Requests Executing";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-#########################
-# MSExchangeIS COUNTERS #
-#########################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeIS;
-                                         'Name'="\MSExchangeIS Client Type(*)\RPC Average Latency";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N1}ms";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeIS;
-                                         'Name'="\MSExchangeIS Client Type(*)\RPC Operations/sec";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeIS;
-                                         'Name'="\MSExchangeIS Store(*)\Active mailboxes";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-######################
-# HttpProxy COUNTERS #
-######################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::HttpProxy;
-                                         'Name'="\MSExchange HttpProxy(*)\Average ClientAccess Server Processing Latency";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N1}ms";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::HttpProxy;
-                                         'Name'="\MSExchange HttpProxy(eas)\Outstanding Proxy Requests";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}                                        
-############################
-# RpcClientAccess COUNTERS #
-############################
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::RpcClientAccess;
-                                         'Name'="\MSExchange RpcClientAccess\RPC Averaged Latency";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N1}ms";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::RpcClientAccess;
-                                         'Name'="\MSExchange RpcClientAccess\Active User Count";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-$counters += New-Object PSObject -Prop @{'Category'=[Category]::RpcClientAccess;
-                                         'Name'="\MSExchange RpcClientAccess\RPC Requests";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-#######################
-# ActiveSync COUNTERS #
-#######################
-$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeActiveSync;
-                                         'Name'="\MSExchange ActiveSync\Ping Commands Pending";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeActiveSync;
-                                         'Name'="\MSExchange ActiveSync\Sync Commands Pending";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeActiveSync;
-                                         'Name'="\MSExchange ActiveSync\Requests/sec";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}
-$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::MSExchangeActiveSync;
-                                         'Name'="\MSExchange ActiveSync\Current Requests";
-                                         'FormatDivider'=1;
-                                         'FormatString'="{0:N0}";}											 
-##########################
-# TopNProcesses COUNTERS #
-##########################
-$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::TopNProcesses;
-                                         'Name'="\Process(*)\% Processor Time";
-                                         'FormatDivider'=100;
-                                         'FormatString'="{0:p1}";}
-$topNCounters += New-Object PSObject -Prop @{'Category'=[Category]::TopNProcesses;
-                                         'Name'="\Process(*)\Working Set";
-                                         'FormatDivider'=1MB;
-                                         'FormatString'="{0:N0}MB";}
-$counters += $topNCounters # we keep track of topNcounters for when we need to print later
-}
-Write-Host "  completed in $("{0:N1}" -f $counterInitTime.TotalSeconds) seconds."
+#"\\*\LogicalDisk(*)\Avg. Disk sec/Read","\\*\LogicalDisk(*)\Avg. Disk sec/Write","\\*\LogicalDisk(*)\Avg. Disk sec/Transfer","\\*\LogicalDisk(*)\Disk Transfers/sec","\\*\LogicalDisk(*)\Disk Bytes/sec","\\*\LogicalDisk(*)\Avg. Disk Queue Length","\\*\LogicalDisk(*)\% Idle Time","\\*\Processor(_Total)\% Processor Time","\\*\System\Processor Queue Length","\\*\System\Context Switches/sec","\\*\Memory\Available MBytes","\\*\Netlogon(*)\*","\\*\Processor Information(*)\% of Maximum Frequency"
+#"\LogicalDisk(*)\Avg. Disk sec/Read","\LogicalDisk(*)\Avg. Disk sec/Write","\LogicalDisk(*)\Avg. Disk sec/Transfer","\LogicalDisk(*)\Disk Transfers/sec","\LogicalDisk(*)\Disk Bytes/sec","\LogicalDisk(*)\Avg. Disk Queue Length","\LogicalDisk(*)\% Idle Time","\Processor(_Total)\% Processor Time","\System\Processor Queue Length","\System\Context Switches/sec","\Memory\Available MBytes","\Netlogon(*)\*","\Processor Information(*)\% of Maximum Frequency"
+Function Get-PerformanceDataFromFileLocal {
+	[CmdletBinding()]
+	[OutputType([System.Collections.Generic.List[PerformanceHealth.PerfFileDataInfo]])]
+	param(
+		[parameter(mandatory=$true)][string[]]$FullPath,
+		[parameter(mandatory=$true)][string[]]$Counters,
+		[parameter(mandatory=$true)][Int64]$MaxSamples,
+		[parameter(mandatory=$true)][DateTime]$StartTime,
+		[parameter(mandatory=$true)][DateTime]$EndTime
+	)
 
-# list of instance names we don't care about
-[string[]] $ignoredInstances = "isatap", "harddiskvolume"
 
-# list of counters we want to promote to server-level detail printing
-[string[]] $listCountersPrintAtServerLevel = "MSExchange RpcClientAccess", "Memory", "Processor Queue Length", "MSExchange ActiveSync"
+	Write-Verbose ("[{0}]: Passed {1} files." -f [DateTime]::Now, $FullPath.Count)
+	[System.Collections.Generic.List[PerformanceHealth.PerfFileDataInfo]]$aPerfFileDataInfo = New-Object System.Collections.Generic.List[PerformanceHealth.PerfFileDataInfo]
+	if($FullPath.Count -gt 0)
+	{
+		
+		foreach($file in $FullPath)
+		{
+			$loopStartTime = [System.DateTime]::Now
+			$perfDataInfoObj = New-Object PerformanceHealth.PerfFileDataInfo
+			$perfDataInfoObj.FileName = $file
+			$importParams = @{
+				Path = $file
+				StartTime = $StartTime
+				EndTime = $EndTime
+				MaxSamples = $MaxSamples
+				ErrorAction = "SilentlyContinue"
+				Verbose = $false
+			}
 
-function IsIgnoredInstance($str) {
-    foreach ($s in $script:ignoredInstances) {
-        if ($str -match $s) {
-            return $true
-        }
-    }
-    return $false
+
+			if($Counters -ne $null -and $Counters.Count -gt 0)
+			{
+				$importParams.Add("Counter", $Counters)
+			}
+
+
+			Write-Verbose ("[{0}]: Importing counters from file. File Size: {1}MB. File Name: {2}." -f [DateTime]::Now, ((Get-Item $file).Length / 1024 / 1024), $file)
+			#$importCounterSamples = (Import-Counter @importParams).CounterSamples
+			$perfDataInfoObj.CounterSamples = (Import-Counter @importParams).CounterSamples
+			Write-Verbose ("[{0}]: Finished Importing counters from file. File Name: {1}" -f [DateTime]::Now, $file)
+			#$aCounterSamples.Add($importCounterSamples)
+			$perfDataInfoObj.ReadingFileTime =  New-TimeSpan $($loopStartTime) $([System.DateTime]::Now)
+			$aPerfFileDataInfo.Add($perfDataInfoObj)
+		}
+
+	}
+	#This returns an Array that contains the results per file in their own array. The function after this needs to be able to pull out and review the data as needed. 
+	return $aPerfFileDataInfo
+
 }
 
-function IsPrintAtServerLevelCounter($str) {
-    foreach ($s in $script:listCountersPrintAtServerLevel) {
-        if ($str -match $s) {
-            return $true
-        }
-    }
-    return $false
+
+Function Convert-PerformanceCounterSampleObjectToServerPerformanceObjectWithQuickAnalyze {
+[CmdletBinding()]
+[OutputType([System.Collections.Generic.List[System.Object]])]
+param(
+[Parameter(Mandatory=$true)][Array]$RawData,
+[Parameter(Mandatory=$true)][xml]$XmlList,
+[Parameter(Mandatory=$false)][string]$FileName,
+[Parameter(Mandatory=$false)][timespan]$ReadTimeSpan
+)
+	Write-Verbose("Calling Convert-PerformanceCounterSampleObjectToServerPerformanceObjectWithQuickAnalyze")
+	$measure_gData = Measure-Command { $gData = $RawData | Group-Object Path}
+	Write-Verbose("Grouped Raw Data in {0} seconds" -f $measure_gData.TotalSeconds)
+	Write-Verbose("There are {0} different paths detected" -f $gData.Count)
+
+	Function Get-FullCounterNameObject
+	{
+		param(
+			[Parameter(Mandatory=$true)][object]$PerformanceCounterSample 
+		)
+
+		$FullCounterSamplePath = $PerformanceCounterSample.Path 
+		#\\adt-e2k13aio1\logicaldisk(harddiskvolume1)\avg. disk sec/read
+		$iEndOfServerIndex = $FullCounterSamplePath.IndexOf("\",2) #\\adt-e2k13aio1 <> \logicaldisk(harddiskvolume1)\avg. disk sec/read
+		$iStartOfCounterIndex = $FullCounterSamplePath.LastIndexOf("\") + 1#\\adt-e2k13aio1\logicaldisk(harddiskvolume1)\ <> avg. disk sec/read
+		$iEndOfCounterObjectIndex = $FullCounterSamplePath.IndexOf("(")
+		if($iEndOfCounterObjectIndex -eq -1){$iEndOfCounterObjectIndex = $FullCounterSamplePath.LastIndexOf("\")}
+		$obj = New-Object PerformanceHealth.CounterNameObject
+		$obj.ServerName = ($FullCounterSamplePath.Substring(2,($iEndOfServerIndex - 2)))
+		$obj.ObjectName = ($FullCounterSamplePath.Substring($iEndOfServerIndex + 1, $iEndOfCounterObjectIndex - $iEndOfServerIndex - 1 ))
+		$obj.CounterName = ($FullCounterSamplePath.Substring($FullCounterSamplePath.LastIndexOf("\") + 1))
+		if(($FullCounterSamplePath.Contains("(")) -and ($FullCounterSamplePath.Contains("#")))
+		{
+				$instanceName = $FullCounterSamplePath.Substring($FullCounterSamplePath.IndexOf("(") + 1, ($FullCounterSamplePath.IndexOf(")") - $FullCounterSamplePath.IndexOf("(") - 1))
+		}
+		else
+		{
+			$instanceName = ($PerformanceCounterSample.InstanceName)
+		}
+		$obj.InstanceName = $instanceName
+		$obj.FullName = ($FullCounterSamplePath)
+		return $obj
+	}
+
+
+	Function Build-ServerPerformanceObject_CounterData {
+	param(
+		[Parameter(Mandatory=$true)][object]$CounterNameObject
+	)
+		[PerformanceHealth.CounterDataObject]$counterDataPerfObject = New-Object PerformanceHealth.CounterDataObject
+		$counterDataPerfObject.FullName = $CounterNameObject.FullName 
+		$counterDataPerfObject.ServerName = $CounterNameObject.ServerName 
+		$counterDataPerfObject.ObjectName = $CounterNameObject.ObjectName
+		$counterDataPerfObject.InstanceName = $CounterNameObject.InstanceName 
+		$counterDataPerfObject.CounterName = $CounterNameObject.CounterName 
+		$counterDataPerfObject.CounterCategory = [string]::Empty
+		$counterDataPerfObject.DetectIssuesType = [string]::Empty
+		$counterDataPerfObject.HealthReport = New-Object -TypeName PerformanceHealth.HealthReport 
+		$counterDataPerfObject.Accuracy = New-Object -TypeName PerformanceHealth.AccuracyObject
+		$counterDataPerfObject.DisplayOptions = New-Object -TypeName PerformanceHealth.DisplayOptionsObject
+		$counterDataPerfObject.Threshold = New-Object PerformanceHealth.CounterThresholds
+		$counterDataPerfObject.QuickSummaryStats = New-Object -TypeName PerformanceHealth.QuickSummaryStatsObject 
+		#$tRawData = New-Object -TypeName PerformanceHealth.RawDataObject
+		#[System.Collections.Generic.List[System.Object]]$trd = New-Object -TypeName System.Collections.Generic.List[System.Object]
+		#$trd.Add($tRawData)
+		#$counterDataPerfObject | Add-Member -Name RawData -MemberType NoteProperty -Value $trd
+		return $counterDataPerfObject
+	}
+
+	Function Build-ServerPerformanceObject_Server {
+	param(
+		[Parameter(Mandatory=$true)][object]$CounterNameObject
+	)
+
+		[PerformanceHealth.ServerPerformanceObject]$serverPerfObject = New-Object -TypeName PerformanceHealth.ServerPerformanceObject
+		$serverPerfObject.FileName = $CounterNameObject.FileName
+		$serverPerfObject.ServerName = $CounterNameObject.ServerName
+		$serverPerfObject.Accuracy = New-Object -TypeName PerformanceHealth.AccuracyObject 
+		$serverPerfObject.HealthReport = New-Object -TypeName PerformanceHealth.HealthReport 
+		$serverPerfObject.StartTime = [DateTime]::MinValue
+		$serverPerfObject.EndTime = [DateTime]::MaxValue
+		
+		return $serverPerfObject
+	}
+
+	$tMasterObject = New-Object System.Collections.Generic.List[System.Object]
+
+	foreach($gPath in $gData)
+	{
+		$counterNameObj = Get-FullCounterNameObject -PerformanceCounterSample $gPath.Group[0]
+		$counterDataObj = Build-ServerPerformanceObject_CounterData -CounterNameObject $counterNameObj
+		$counterDataObj.AllRawData = $gPath.Group
+		$counterDataObj.CounterType = $counterDataObj.FirstSample.CounterType
+
+		#Now we need to loop through the xml to add the counter data information 
+		foreach($xmlCounter in $XmlList.Counters.Counter)
+		{
+			if($counterDataObj.ObjectName -like ("*" + $xmlCounter.CounterSetName) -and
+				$counterDataObj.CounterName -eq $xmlCounter.CounterName
+			)
+			{
+				$counterDataObj.DetectIssuesType = $xmlCounter.MonitorChecks.Main
+				$counterDataObj.Threshold.MaxValue = $xmlCounter.Threshold.MaxValue
+				$counterDataObj.Threshold.WarningValue = $xmlCounter.Threshold.WarningValue 
+				$counterDataObj.Threshold.AverageValue = $xmlCounter.Threshold.Average
+				$counterDataObj.CounterCategory = $xmlCounter.Category
+				$counterDataObj.DisplayOptions.FormatDivider = $xmlCounter.DisplayOptions.FormatDivider
+				$counterDataObj.DisplayOptions.FormatString = $xmlCounter.DisplayOptions.FormatString
+				#If we find it, we shouldn't need to loop through any longer and we can break out of the XML loop 
+				break; 
+			}
+		}
+
+		#Now we need to quick Analyze the data sets while we are in here. 
+		# $measured = $counterObj.RawData | Measure-Object -Property CookedValue -Maximum -Minimum -Average   ## Bill Long removed this, checking with him to verify why this change was made. 
+
+		$min = [Int64]::MaxValue; 
+		$max = [Int64]::MinValue; 
+		foreach($sample in $counterDataObj.RawData)
+		{
+			if($sample.CookedValue -lt $min) {$min = $sample.CookedValue}
+			if($sample.CookedValue -gt $max) {$max = $sample.CookedValue}
+		}
+
+		$counterDataObj.QuickSummaryStats.Min = $min
+		$counterDataObj.QuickSummaryStats.Max = $max
+		$counterDataObj.QuickSummaryStats.StartTime = $counterDataObj.FirstSample.TimeStamp
+		$counterDataObj.QuickSummaryStats.EndTime = $counterDataObj.LastSample.TimeStamp
+		$counterDataObj.QuickSummaryStats.Duration = New-TimeSpan $($counterDataObj.QuickSummaryStats.StartTime) $($counterDataObj.QuickSummaryStats.EndTime)
+
+		#Calculate Averages 
+		#Average calculation for Average counters taken from these references:
+		#https://msdn.microsoft.com/en-us/library/ms804010.aspx
+		#https://blogs.msdn.microsoft.com/ntdebugging/2013/09/30/performance-monitor-averages-the-right-way-and-the-wrong-way/
+		
+		if($counterDataObj.CounterType -like "AverageTimer*")
+		{
+			$numTicksDiff = $counterDataObj.LastSample.RawValue - $counterDataObj.FirstSample.RawValue
+			$frequency = $counterDataObj.LastSample.TimeBase
+			$numOpsDif = $counterDataObj.LastSample.SecondValue - $counterDataObj.FirstSample.SecondValue 
+			if($frequency -ne 0 -and $numTicksDiff -ne 0 -and $numOpsDif -ne 0)
+			{
+				$counterDataObj.QuickSummaryStats.Avg = (($numTicksDiff / $frequency) / $numOpsDif)
+			}
+		}
+		else
+		{
+			$counterDataObj.QuickSummaryStats.Avg = ($counterDataObj.RawData | Measure-Object -Property CookedValue -Average).Average
+		}
+		
+		$tMasterObject.Add($counterDataObj)
+	}
+
+	#Now we need to group for the server object (if we have multiple) and build the server object and return the data
+	$MasterObject = New-Object System.Collections.Generic.List[System.Object]
+	$serversGroup = $tMasterObject | Group-Object ServerName 
+	foreach($svr in $serversGroup)
+	{
+		$cdo = Get-FullCounterNameObject -PerformanceCounterSample ($svr.Group[0].RawData | Select-Object -First 1)
+		$svrData = Build-ServerPerformanceObject_Server -CounterNameObject $cdo
+		$svrData.CounterData = $svr.Group 
+		$svrData.FileName = $FileName
+		$svrData.ReadTime = $ReadTimeSpan
+		$svrData.StartTime = ($svr.Group[0].RawData | Sort-Object TimeStamp | Select-Object -First 1).TimeStamp
+		$svrData.EndTime = ($svr.Group[0].RawData | Sort-Object TimeStamp | Select-Object -Last 1).TimeStamp
+		$MasterObject.Add($svrData)
+	}
+
+	return $MasterObject
 }
 
-function ParseCounters {
-    $ErrorActionPreference = "SilentlyContinue"
 
-    Write-Host -ForegroundColor Green "Parsing file..."
+Function Output-QuickSummaryDetails {
+[CmdletBinding()]
+param(
+[Parameter(Mandatory=$true)][Object]$ServerObject
+)
+	Write-Verbose("[{0}] : Calling Output-QuickSummaryDetails" -f [DateTime]::Now)
+	
+	$Script:displayString = [string]::Empty
+	$strLength_detail = 48
+	$strLength_columnWidth = 12
+	
+	Function Add-Line {
+	param(
+		[Parameter(Mandatory=$true)][string]$New_line
+	)
+		$Script:displayString += $New_line + "`r`n"
+	}
+	$Script:measure_display = Measure-Command{
+	Add-Line("Exchange Perfmon Log Summary")
+	Add-Line("=============================")
+	Add-Line("{0,-18} : {1}" -f "File", $ServerObject.FileName)
+	Add-Line("{0,-18} : {1}" -f "Server", $ServerObject.ServerName )
+	Add-Line("{0,-18} : {1}" -f "Start Time", $ServerObject.StartTime)
+	Add-Line("{0,-18} : {1}" -f "End Time",$ServerObject.EndTime)
+	Add-Line("{0,-18} : {1}" -f "Duration",(New-TimeSpan $($ServerObject.StartTime) $($ServerObject.EndTime)).ToString())
+	#Setup the output file 
+	
+	$outFile = $ServerObject.FileName + "_Quick_Summary.txt"
 
-    $script:processingTime = Measure-Command {
+	$groupCounterCategory = $ServerObject.CounterData | Group-Object CounterCategory | ?{$_.Name -ne "" -and $_.Name -ne "Process"} | Sort-Object Name
+	$groupCounterCategoryProcess = $ServerObject.CounterData | Group-Object CounterCategory | ?{$_.Name -eq "Process"}
+	$groupCounterCategoryN = $ServerObject.CounterData | Group-Object CounterCategory | ?{$_.Name -eq ""}
 
-        # summarize counters grouped by COUNTER, SERVER, INSTANCE
-        foreach ($counter in $counters) {
+	foreach($gCategory in $groupCounterCategory)
+	{
+		Add-Line(" ")
+		Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f $gcategory.Name, "Min","Max","Avg")
+		Add-Line("==========================================================================================")
+		#because these are all based off the sum category that could contain different Counter Object Names, we are going to group by that first then the actual counter
+		$gObjectCounter = $gCategory.Group | Group-Object ObjectName 
+		foreach($objCounter in $gObjectCounter)
+		{
+			$gCounterNameObject = $objCounter.Group | Group-Object Countername 
+			
+			foreach($counterGroup in $gCounterNameObject)
+			{
+				if($counterGroup.Group[0].InstanceName -eq "")
+				{
+					
+					$fs = $counterGroup.Group[0].DisplayOptions.FormatString
+					$fd = $counterGroup.Group[0].DisplayOptions.FormatDivider 
+					Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f ("\" + $counterGroup.Group[0].ObjectName + "\" + $counterGroup.Group[0].CounterName),
+						($fs -f ($counterGroup.Group[0].QuickSummaryStats.Min / $fd)),
+						($fs -f ($counterGroup.Group[0].QuickSummaryStats.Max / $fd)),
+						($fs -f ($counterGroup.Group[0].QuickSummaryStats.Avg / $fd)))
+				}
+				else
+				{
+					Add-Line("{0,-$($strLength_detail+2)}" -f ("\" + $counterGroup.Group[0].ObjectName + "(*)\" + $counterGroup.Group[0].CounterName))
+					foreach($instanceObj in $counterGroup.Group)
+					{
+						$fs = $instanceObj.DisplayOptions.FormatString
+						$fd = $instanceObj.DisplayOptions.FormatDivider
+						Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f $instanceObj.InstanceName,
+							($fs -f ($instanceObj.QuickSummaryStats.Min / $fd)),
+							($fs -f ($instanceObj.QuickSummaryStats.Max / $fd)),
+							($fs -f ($instanceObj.QuickSummaryStats.Avg / $fd))
+						)
+					}
+				}
 
-            foreach ($server in $Servers) {
-            
-                # load in data from file
-                $str = "\\" + $server + $counter.Name
-                Write-Verbose "Processing counter: $str"
-                $samples = Import-Counter $PerfmonFilePath -Counter $str
+			}
+		}
 
-                $numSamples = $samples.Count
-                $numInstances = $samples[0].CounterSamples.Count
-                $script:totalSamples += $numSamples
-                Write-Debug "$numSamples samples, $numInstances instances"
+	}
 
-                # iterate through each instance
-                for ($j = 0; $j -lt $numInstances; $j++) {
+	foreach($gCategory in $groupCounterCategoryProcess)
+	{
+		$gCounterNameObject = $gCategory.Group | Group-Object CounterName
+		Add-Line(" ")
+		Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f $gcategory.Name, "Min","Max","Avg")
+		Add-Line("==========================================================================================")
+		
+		foreach($counterGroup in $gCounterNameObject)
+		{
+			Add-Line("{0,-$($strLength_detail+2)}" -f ("\" + $counterGroup.Group[0].ObjectName + "(*)\" + $counterGroup.Group[0].CounterName))
+			$TopN = $counterGroup.Group | ?{$_.InstanceName -ne "_total" -and $_.InstanceName -ne "idle"} | Select * -ExpandProperty QuickSummaryStats | Sort-Object Avg -Descending | Select-Object -First $ShowNProcesses 
+			foreach($process in $TopN)
+			{
+				$fs = $process.DisplayOptions.FormatString
+				$fd = $process.DisplayOptions.FormatDivider
+				Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f $process.InstanceName,
+					($fs -f ($process.QuickSummaryStats.Min / $fd)),
+					($fs -f ($process.QuickSummaryStats.Max / $fd)),
+					($fs -f ($process.QuickSummaryStats.Avg / $fd))
+					)
+			}
+		}
 
-                    # prepare summary variables for instance
-                    [string] $instanceName = $samples[0].CounterSamples[$j].Path.Split(("(", ")"))[1]
-                    if (IsIgnoredInstance($instanceName)) {
-                        Write-Debug "Ignoring instance: $instanceName"
-                        continue
-                    } else {
-                        Write-Debug "Processing instance: $instanceName"
-                    }
-                    [double] $value = 0
-                    [double] $max = 0
-                    [double] $min = $samples[0].CounterSamples[$j].CookedValue
+	}
 
-                    # summarize instance samples
-                    for ($k = 0; $k -lt $numSamples; $k++) {
-                        $v = $samples[$k].CounterSamples[$j]
-                        $value += $v.CookedValue
-                        if ($v.CookedValue -gt $max) { $max = $v.CookedValue }
-                        if ($v.CookedValue -lt $min) { $min = $v.CookedValue }
+	
+	foreach($gCategory in $groupCounterCategoryN)
+	{
+		$gObjectCounter = $gCategory.Group | Group-Object ObjectName 
+		foreach($objCounter in $gObjectCounter)
+		{
+			$gCounterNameObject = $objCounter.Group | Group-Object CounterName
+			foreach($counterGroup in $gCounterNameObject)
+			{
+				if($counterGroup.Group[0].InstanceName -eq "")
+				{
+					
+					Add-Line(" ")
+					Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f ($counterGroup.Group[0].ObjectName + "-" + $counterGroup.Group[0].CounterName), "Min", "Max", "Avg")
+					Add-Line("==========================================================================================")
+					Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f ("\" + $counterGroup.Group[0].ObjectName + "\" + $counterGroup.Group[0].CounterName),
+						$counterGroup.Group[0].QuickSummaryStats.Min,
+						$counterGroup.Group[0].QuickSummaryStats.Max,
+						$counterGroup.Group[0].QuickSummaryStats.Avg)
+				}
+				else
+				{
+					Add-Line(" ")
+					Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f ($counterGroup.Group[0].ObjectName + "-" + $counterGroup.Group[0].CounterName), "Min", "Max", "Avg")
+					Add-Line("==========================================================================================")
+					Add-Line("{0,-$strLength_detail} {1,$strLength_columnWidth} {2,$strLength_columnWidth} {3,$strLength_columnWidth}" -f ($counterGroup.Group[0].InstanceName),
+						$counterGroup.Group[0].QuickSummaryStats.Min,
+						$counterGroup.Group[0].QuickSummaryStats.Max,
+						$counterGroup.Group[0].QuickSummaryStats.Avg)
+				}
+			}
+		}
+	}
 
-                        if ($v.Timestamp -lt $script:earliestTimestamp) {
-                            $script:earliestTimestamp = $v.Timestamp
-                        }
+	Add-Line(" ")
+	Add-Line(" ")
+	Add-Line("Analysis Stats")
+	Add-Line("================")
+	Add-Line("{0,-24} : {1}" -f "Report Generated by", "ExPerfAnalyzer.ps1 " + $ScriptVersion)
+	Add-Line("{0,-24} : {1}" -f "Written by", "Matthew Huynh (mahuynh@microsoft.com) & David Paulson (dpaul@microsoft.com)")
+	Add-Line("{0,-24} : {1}" -f "Contributor", "Bill Long")
+	$currentTime = [dateTime]::Now
+	Add-Line("{0,-24} : {1}" -f "Generated On",($currentTime.ToShortDateString() + " " + $currentTime.ToShortTimeString()))
+	$totalCounterProcessed = $ServerObject.CounterData.Count
+	$totalSamples = $ServerObject.CounterData.RawData.Count
+	Add-Line("{0,-24} : {1:N0}" -f "Total Counters Processed", $totalCounterProcessed)
+	Add-Line("{0,-24} : {1:N0}" -f "Total Samples", $totalSamples)
+	$pTime = (New-TimeSpan $($script:processStartTime) $([datetime]::Now))
+	Add-Line("{0,-24} : {1:N1}s" -f "Total File Read Time", ($ServerObject.ReadTime.TotalSeconds))
+	Add-Line("{0,-24} : {1:N1}s" -f "Total Processing Time", $pTime.TotalSeconds)
+	Add-Line("{0,-24} : {1:N5}s" -f "Samples Processed/sec", ([double]$totalSamples / $pTime.TotalSeconds))
+	Add-Line("{0,-24} : {1:N5}s" -f "Proc. Time Per Sample", ($pTime.TotalSeconds /[double]$totalSamples))
 
-                        if ($v.Timestamp -gt $script:latestTimestamp) {
-                            $script:latestTimestamp = $v.Timestamp
-                        }
 
-                        if ($k -gt 0) {
-                            $diff = ($v.Timestamp - $previousTimestamp).TotalSeconds
-                            $script:sampleInterval = ($script:sampleInterval + $diff) / 2
-                        }
-
-                        $previousTimestamp = $v.Timestamp
-                    }
-
-                    # save instance summary
-                    $summaryLine = New-Object System.Object
-                    $summaryLine | Add-Member -Type NoteProperty -Name Category -Value $counter.Category
-                    $summaryLine | Add-Member -Type NoteProperty -Name Counter -Value $counter.Name
-                    $summaryLine | Add-Member -Type NoteProperty -Name Server -Value $server
-                    if ($instanceName.Length -gt $script:detailLineStrLength) {
-                        $instanceStr = $instanceName.Substring(0, $script:detailLineStrLength)
-                    } else {
-                        $instanceStr = $instanceName
-                    }
-                    $summaryLine | Add-Member -Type NoteProperty -Name Instance -Value $instanceStr
-                    #$minStr = $counter.FormatString -f ($min / $counter.FormatDivider)
-                    $summaryLine | Add-Member -Type NoteProperty -Name Min -Value $min
-                    #$maxStr = $counter.FormatString -f ($max / $counter.FormatDivider)
-                    $summaryLine | Add-Member -Type NoteProperty -Name Max -Value $max
-                    $avg = $value / $numSamples
-                    #$avgStr = $counter.FormatString -f ($avg / $counter.FormatDivider)
-                    $summaryLine | Add-Member -Type NoteProperty -Name Avg -Value $avg
-                    # only add lines that have meaningful value
-                    if ($max -gt 0) { $script:summary += $summaryLine }
-                } #end instance loop
-
-            } # end server loop
-
-        } # end counter loop
-        
-    }
-    Write-Host "  completed in $("{0:N1}" -f $script:processingTime.TotalSeconds) seconds."
-    $ErrorActionPreference = "Continue"
+	}
+	$Script:displayString | Out-File -FilePath $outFile -Force
+	&$outFile
 }
 
-function AddLine([string] $str) {
-    $script:outStr += $str + "`r`n"
+
+
+
+Function Get-CountersFromXml {
+param(
+[Parameter(Mandatory=$true)][xml]$xmlCounters,
+[Parameter(Mandatory=$false)][bool]$IncludeWildForServers = $false
+)
+	$aCounters = New-Object System.Collections.Generic.List[System.Object]
+	if($IncludeWildForServers)
+	{
+		foreach($counter in $xmlCounters.Counters.Counter)
+		{
+			$aCounters.Add("\\*" + $counter.Name)
+		}
+	}
+	else
+	{
+		foreach($counter in $xmlCounters.Counters.Counter)
+		{
+			$aCounters.Add($counter.Name)
+		}
+	}
+
+	return $aCounters
 }
 
-function PrintSummary($lines) {
-    foreach ($val in $lines) {
-        # 1) We need to special case certain counters that do not have an instance so their value resides at the counter line instead
-        # 2) _total can be shifted up to the counter line as well
-        if (IsPrintAtServerLevelCounter($val.Counter)) {
-            Write-Debug "printDetailLineAtCounterLevel = true"
-            $printDetailLineAtCounterLevel = $true
-        } else {
-            $printDetailLineAtCounterLevel = $false
-        }
+Function Main {
 
-        # grab the FormatString as we'll need it to format the min/max/avg
-        $counter = $script:counters | ? {$_.Name -eq $val.Counter}
-        $minStr = $counter.FormatString -f ($val.Min / $counter.FormatDivider)
-        $maxStr = $counter.FormatString -f ($val.Max / $counter.FormatDivider)
-        $avgStr = $counter.FormatString -f ($val.Avg / $counter.FormatDivider)
+	$script:processStartTime = [System.DateTime]::Now
 
-        $isNewCategory = $prevCategory -ne $val.Category
-        $isNewCounter = $prevCounter -ne $val.Counter
+	#determine the logic we want out of the script 
+	Switch($PSCmdlet.ParameterSetName)
+	{
+		"FileDirectory"
+		{
+			Write-Verbose("File Directory Option detected")
+			if(-not (Test-Path $PerfmonFileDirectory))
+			{
+				Write-Host("Path {0} doesn't appear to valid. Stopping the script" -f $PerfmonFileDirectory) -ForegroundColor Red
+				exit
+			}
+			
+			$AllFiles = (Get-ChildItem $PerfmonFileDirectory | ?{$_.Name.EndsWith(".blg")}).VersionInfo.FileName 
+			
+			
+			switch($AllFiles.Count)
+			{
+				0
+					{
+						Write-Host("Doesn't appear to be any blg files in the path {0}. Stopping the script" -f $PerfmonFileDirectory)
+						exit
+					}
+				#Need to use different logic if only 1 file was detected 
+				1
+					{
+						Write-Verbose("We have detected {0} files that we can use in the directory {1}" -f ($AllFiles.count), $PerfmonFileDirectory)
+						$rawLocalData = Get-PerformanceDataFromFileLocal -FullPath $AllFiles -Counters (Get-CountersFromXml -xmlCounters $xmlCountersToAnalyze -IncludeWildForServers $true) -MaxSamples $MaxSamples -StartTime $StartTime -EndTime $EndTime
+						$mainObject = Convert-PerformanceCounterSampleObjectToServerPerformanceObject -RawData $rawLocalData 
+						$mainObject = Add-CountersToAnalyzeToObject -XmlList $xmlCountersToAnalyze -mainObject $mainObject
+						$mainObject = Analyze-DataOfObject -mainObject $mainObject
+						$displayResults = Output-QuickSummaryDetails -ServerObject $mainObject 
+						$displayResults
+						break
+					}
+				#else there are more files 
+				default
+					{
+						Write-Verbose("We have detected {0} files that we can use in the directory {1}" -f ($AllFiles.count), $PerfmonFileDirectory)
+						break
+					}
+			}
+			
 
-        if ($isNewCategory) {
-            # if new category, print Category
-            $prevCategory = $val.Category
-            AddLine("")
-            AddLine("{0,-$($detailLineStrLength+2)} {1,$columnWidth} {2,$columnWidth} {3,$columnWidth}" -f $val.Category, "Min", "Max", "Avg")
-            AddLine("==========================================================================================")
-            $prevCounter = $null
-        }
 
-        # if printDetailLineAtCounterLevel, print Counter + detail
-        # else
-        #   if new counter, print counter
-        #   print detail line
 
-        if ($printDetailLineAtCounterLevel) {
-            AddLine("{0,-$($detailLineStrLength+2)} {1,$columnWidth} {2,$columnWidth} {3,$columnWidth}" -f $val.Counter, $minStr, $maxStr, $avgStr)
-        } else {
+			break;
+		}
+		"SingleFile"
+		{
+			if((-not (Test-Path $PerfmonFile)) -or (-not $PerfmonFile.EndsWith(".blg")))
+			{
+				Write-Host("File {0} doesn't appear to exist or is a blg files. Stopping the script" -f $PerfmonFile)
+				exit
+			}
+			Write-Verbose("Single File appears to be detected. Running against file {0}." -f $PerfmonFile)
+			$script:perffromlocalfile = Measure-Command{ $rawLocalData = Get-PerformanceDataFromFileLocal -FullPath $PerfmonFile -Counters (Get-CountersFromXml -xmlCounters $xmlCountersToAnalyze -IncludeWildForServers $true) -MaxSamples $MaxSamples -StartTime $StartTime -EndTime $EndTime}
+			$script:convertTotal = Measure-Command{ $mainObject = Convert-PerformanceCounterSampleObjectToServerPerformanceObjectWithQuickAnalyze -RawData $rawLocalData.CounterSamples -XmlList $xmlCountersToAnalyze  -FileName $rawLocalData.FileName -ReadTimeSpan $rawLocalData.ReadingFileTime}
+			Output-QuickSummaryDetails -ServerObject $mainObject 
+			break;
+		}
 
-            # if new counter, print Counter
-            if ($isNewCounter) {
-                $prevCounter = $val.Counter
-                AddLine("{0,-$($detailLineStrLength+2)}" -f $val.Counter)
-            }
+	}
 
-            # print the detail line
-            AddLine("  {0,-$detailLineStrLength} {1,$columnWidth} {2,$columnWidth} {3,$columnWidth}" -f $val.Instance, $minStr, $maxStr, $avgStr)
-        }
-
-    }
+	
+	
 }
 
-function OutputSummary {
-    Write-Host -ForegroundColor Green "Writing text file to: " $script:outFile
-    # uncomment the following line if you want the data sent directly to console
-    # $script:summary | ft counter,server,instance,max,min,avg
 
-    $writeTime = Measure-Command {
-    
-        # Log Summary
-        AddLine("Exchange Perfmon Log Summary")
-        AddLine("=============================")
-        AddLine("{0,-18} : {1}" -f "Log Filename", $script:perfmonFilename)
-        AddLine("{0,-18} : {1}" -f "Server", ($Servers -join ", "))
-        AddLine("{0,-18} : {1}" -f "Earliest Timestamp", $script:earliestTimestamp)
-        AddLine("{0,-18} : {1}" -f "Latest Timestamp", $script:latestTimestamp)
-        AddLine("{0,-18} : {1}" -f "Log Duration", ($script:latestTimestamp - $script:earliestTimestamp))
-        AddLine("{0,-18} : {1}s" -f "Sample Interval", $script:sampleInterval)
-
-        # Counters by CATEGORY, COUNTER, SERVER, INSTANCE
-        $regularSummary = ($script:summary | ? {$_.Counter -notin $topNcounters.Name} | sort Category, Counter, Server, Instance)
-        foreach ($topNcounter in $topNcounters) {
-            $topNSummary += ($script:summary | ? {$_.Counter -eq $topNcounter.Name -and $_.Instance -ne '_total' -and $_.Instance -ne 'idle'} | sort Avg -Descending | select -first $TOP_N_PROCESSES)
-        }
-
-        PrintSummary($regularSummary)
-        PrintSummary($topNSummary)
-        AddLine("")
-
-        # Analysis Stats
-        AddLine("Analysis Stats")
-        AddLine("===============")
-        AddLine("{0,-24} : {1}" -f "Report generated by", "ExPerfAnalyzer.ps1 v" + $script:scriptVersion)
-        AddLine("{0,-24} : {1}" -f "Written by", "Matthew Huynh (mahuynh@microsoft.com)")
-        $currTime = Get-Date
-        AddLine("{0,-24} : {1}" -f "Generated On", $currTime.ToShortDateString() + " " + $currTime.ToShortTimeString())
-        AddLine("{0,-24} : {1:N0}" -f "Total counters processed", $script:counters.Count)
-        AddLine("{0,-24} : {1:N0}" -f "Total Samples", $script:totalSamples)
-        AddLine("{0,-24} : {1:N1}s" -f "Total processing time", $script:processingTime.TotalSeconds)
-        AddLine("{0,-24} : {1:N5}s" -f "Samples processed/sec", ([double]$script:totalSamples / $script:processingTime.TotalSeconds))
-        AddLine("{0,-24} : {1:N5}s" -f "Proc. time per sample", ($script:processingTime.TotalSeconds / [double]$script:totalSamples))
-
-        # write string to disk
-        $outStr | Out-File $script:outFile
-    }
-
-    Write-Host "  completed in $("{0:N1}" -f $writeTime.TotalSeconds) seconds."
-}
-
-# parse our data
-ParseCounters
-
-# write output to text file
-OutputSummary
-
-# open file at the end
-&$outFile
+Main

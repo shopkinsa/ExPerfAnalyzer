@@ -4,9 +4,6 @@
 ## Registering script as a default handler
 Execute the script with no parameters and it will register itself as a shell handler for perfmon .blg files. You can then right-click any .blg file and select *ExPerfAnalyzer* to quickly parse the log.
 
-## Project Vision
-The tool is a PowerShell script currently. We are investigating new platforms and technologies as PowerShell is not performant enough for us.
-
 ## Inspiration
 This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.codeplex.com) and PMA.VBS (an internal tool used by Windows support).
 
@@ -21,7 +18,7 @@ This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.cod
 	
 - **What's the expected running time?**
 
-	v0.1.7 and an Intel Core i7-4810MQ @ 2.8Ghz processed a 1GB perfmon sitting on an SSD in 129 seconds.
+	v0.2.2 and an Intel Core i7-4810MQ @ 2.8Ghz processed a 1GB perfmon sitting on an SSD in 13 seconds.
 
 - **Can I edit this script however I'd like?**
 
@@ -32,6 +29,11 @@ This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.cod
     Of course!
 
 ## Changelog
+* v0.2.2 (2018-01-16)
+  - First position parameter is bound to PerfmonFile param
+* v0.2.1 (2017-08-31)
+  - Major performance improvements
+  - Script structure changes
 * v0.2.0 (2017-06-05)
   - Kubilay Ekici added ActiveSync counters
 * v0.1.9 (2016-12-20)

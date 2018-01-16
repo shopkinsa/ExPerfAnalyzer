@@ -7,7 +7,7 @@ Param(
 	[Parameter(ParameterSetName="SingleFile")][DateTime]$StartTime = [DateTime]::MinValue,
 [Parameter(Mandatory=$false,ParameterSetName="FileDirectory")]
 	[Parameter(ParameterSetName="SingleFile")][DateTime]$EndTime = [DateTime]::MaxValue,
-[Parameter(Mandatory=$true,ParameterSetName="SingleFile")][string]$PerfmonFile
+[Parameter(Position=0,Mandatory=$true,ParameterSetName="SingleFile")][string]$PerfmonFile
 )
 $ScriptVersion = "v2.1"
 $ShowNProcesses = 10

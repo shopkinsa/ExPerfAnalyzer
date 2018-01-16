@@ -7,9 +7,10 @@ Param(
 	[Parameter(ParameterSetName="SingleFile")][DateTime]$StartTime = [DateTime]::MinValue,
 [Parameter(Mandatory=$false,ParameterSetName="FileDirectory")]
 	[Parameter(ParameterSetName="SingleFile")][DateTime]$EndTime = [DateTime]::MaxValue,
-[Parameter(Position=0,Mandatory=$true,ParameterSetName="SingleFile")][string]$PerfmonFile
+[Parameter(Position=0,Mandatory=$true,ParameterSetName="SingleFile")][string]$PerfmonFile,
+[Parameter(Mandatory=$false,ParameterSetName="RegisterHandler")][Switch]$RegisterHandler
 )
-$ScriptVersion = "v2.1"
+$ScriptVersion = "v2.3"
 $ShowNProcesses = 10
 
 #Class
@@ -1040,7 +1041,7 @@ Function Main {
 			Write-Verbose("File Directory Option detected")
 			if(-not (Test-Path $PerfmonFileDirectory))
 			{
-				Write-Host("Path {0} doesn't appear to valid. Stopping the script" -f $PerfmonFileDirectory) -ForegroundColor Red
+				Write-Error ("Path '{0}' is invalid or cannot be accessed." -f $PerfmonFileDirectory)
 				exit
 			}
 			
@@ -1051,13 +1052,13 @@ Function Main {
 			{
 				0
 					{
-						Write-Host("Doesn't appear to be any blg files in the path {0}. Stopping the script" -f $PerfmonFileDirectory)
+						Write-Error ("Cannot find any .blg files in the path '{0}'." -f $PerfmonFileDirectory)
 						exit
 					}
 				#Need to use different logic if only 1 file was detected 
 				1
 					{
-						Write-Verbose("We have detected {0} files that we can use in the directory {1}" -f ($AllFiles.count), $PerfmonFileDirectory)
+						Write-Verbose("We have detected {0} .blg files in directory {1}" -f ($AllFiles.count), $PerfmonFileDirectory)
 						$rawLocalData = Get-PerformanceDataFromFileLocal -FullPath $AllFiles -Counters (Get-CountersFromXml -xmlCounters $xmlCountersToAnalyze -IncludeWildForServers $true) -MaxSamples $MaxSamples -StartTime $StartTime -EndTime $EndTime
 						$mainObject = Convert-PerformanceCounterSampleObjectToServerPerformanceObject -RawData $rawLocalData 
 						$mainObject = Add-CountersToAnalyzeToObject -XmlList $xmlCountersToAnalyze -mainObject $mainObject
@@ -1069,34 +1070,52 @@ Function Main {
 				#else there are more files 
 				default
 					{
-						Write-Verbose("We have detected {0} files that we can use in the directory {1}" -f ($AllFiles.count), $PerfmonFileDirectory)
+						Write-Verbose("We have detected {0} .blg files in directory {1}" -f ($AllFiles.count), $PerfmonFileDirectory)
 						break
 					}
 			}
-			
-
-
 
 			break;
 		}
+
 		"SingleFile"
 		{
-			if((-not (Test-Path $PerfmonFile)) -or (-not $PerfmonFile.EndsWith(".blg")))
+			if (-not (Test-Path $PerfmonFile))
 			{
-				Write-Host("File {0} doesn't appear to exist or is a blg files. Stopping the script" -f $PerfmonFile)
+				Write-Error ("File {0} does not exist or cannot be accessed." -f $PerfmonFile)
 				exit
 			}
-			Write-Verbose("Single File appears to be detected. Running against file {0}." -f $PerfmonFile)
+            if (-not $PerfmonFile.EndsWith(".blg"))
+			{
+				Write-Error ("File {0} does not have a .blg file extension." -f $PerfmonFile)
+				exit
+			}
+			Write-Host ("Single file mode: processing '{0}'" -f $PerfmonFile)
 			$script:perffromlocalfile = Measure-Command{ $rawLocalData = Get-PerformanceDataFromFileLocal -FullPath $PerfmonFile -Counters (Get-CountersFromXml -xmlCounters $xmlCountersToAnalyze -IncludeWildForServers $true) -MaxSamples $MaxSamples -StartTime $StartTime -EndTime $EndTime}
 			$script:convertTotal = Measure-Command{ $mainObject = Convert-PerformanceCounterSampleObjectToServerPerformanceObjectWithQuickAnalyze -RawData $rawLocalData.CounterSamples -XmlList $xmlCountersToAnalyze  -FileName $rawLocalData.FileName -ReadTimeSpan $rawLocalData.ReadingFileTime}
 			Output-QuickSummaryDetails -ServerObject $mainObject 
 			break;
 		}
 
+        "RegisterHandler"
+        {
+            # register this script as a handler for perfmon BLG files
+            New-PSDrive -PSProvider Registry -Root HKEY_CLASSES_ROOT -Name HKCR | Out-Null
+            $scriptPath = $MyInvocation.ScriptName
+            $defaultCommand = 'powershell.exe -command "& ' + "'" + $scriptPath + "'" + " '%1'" + '"'
+            Write-Debug $defaultCommand
+            $newRegKey = New-Item HKCR:\Diagnostic.Perfmon.Document\shell\ExPerfAnalyzer\command -Force -Value $defaultCommand
+            $string = "ExPerfAnalyzer {0}registered itself as a shell handler for perfmon .blg files."
+            if ($newRegKey -ne $null) {
+                Write-Host -ForegroundColor Green ($string -f "")
+            } else {
+                Write-Error ($string -f "failed to ")
+            }
+            break;
+        }
+
 	}
 
-	
-	
 }
 
 

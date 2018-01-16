@@ -2,7 +2,8 @@
     .\ExPerfAnalyzer.ps1 .\EXSERVER01_FULL_000001.BLG
 
 ## Registering script as a default handler
-Execute the script with no parameters and it will register itself as a shell handler for perfmon .blg files. You can then right-click any .blg file and select *ExPerfAnalyzer* to quickly parse the log.
+    .\ExPerfAnalyzer.ps1 -RegisterHandler
+PowerShell must be running as an administrator for this command to work. The script will register itself as a shell handler for perfmon .blg files. You can then right-click any .blg file and select *ExPerfAnalyzer* to quickly parse the file.
 
 ## Inspiration
 This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.codeplex.com) and PMA.VBS (an internal tool used by Windows support).
@@ -29,6 +30,8 @@ This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.cod
     Of course!
 
 ## Changelog
+* v0.2.3 (2018-01-16)
+  - Added shell handler registration param
 * v0.2.2 (2018-01-16)
   - First position parameter is bound to PerfmonFile param
 * v0.2.1 (2017-08-31)

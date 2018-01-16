@@ -18,7 +18,7 @@ This script was inspired by [Performance Analysis of Logs (PAL)](https://pal.cod
 	
 - **What's the expected running time?**
 
-	v0.2.2 and an Intel Core i7-4810MQ @ 2.8Ghz processed a 1GB perfmon sitting on an SSD in 13 seconds.
+	v0.2.2 and an Intel Core i7-4810MQ @ 2.8Ghz processed a 1GB perfmon sitting on an SSD in 11 seconds.
 
 - **Can I edit this script however I'd like?**
 

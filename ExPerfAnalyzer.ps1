@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 Param(
 #[Parameter(Mandatory=$true,ParameterSetName="FileDirectory")][string]$PerfmonFileDirectory,
 [Parameter(Mandatory=$false,ParameterSetName="FileDirectory")]
@@ -357,6 +357,74 @@ $xmlCountersToAnalyze = [xml]@"
 		<Main>None</Main>
 	</MonitorChecks>
 </Counter>
+<Counter Name = "\MSExchange Database ==> Instances(*)\I/O Database Reads (Attached) Average Latency">
+	<Category>MSExchange Database</Category>
+	<CounterSetName>Instances</CounterSetName>
+	<CounterName>I/O Database Reads (Attached) Average Latency</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0.020</Average>
+		<Maxvalue>0.001</Maxvalue>
+		<WarningValue>0.001</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>DeepGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange Database ==> Instances(*)\I/O Database Writes (Attached) Average Latency">
+	<Category>MSExchange Database</Category>
+	<CounterSetName>Instances</CounterSetName>
+	<CounterName>I/O Database Writes (Attached) Average Latency</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0.020</Average>
+		<Maxvalue>0.001</Maxvalue>
+		<WarningValue>0.001</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>DeepGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange Database ==> Instances(*)\I/O Log Reads Average Latency">
+	<Category>MSExchange Database</Category>
+	<CounterSetName>Instances</CounterSetName>
+	<CounterName>I/O Log Reads Average Latency</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0.020</Average>
+		<Maxvalue>0.001</Maxvalue>
+		<WarningValue>0.001</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>DeepGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
+<Counter Name = "\MSExchange Database ==> Instances(*)\I/O Log Writes Average Latency">
+	<Category>MSExchange Database</Category>
+	<CounterSetName>Instances</CounterSetName>
+	<CounterName>I/O Log Writes Average Latency</CounterName>
+	<DisplayOptions>
+		<FormatDivider>1</FormatDivider>
+		<FormatString>{0:N1}ms</FormatString>
+	</DisplayOptions>
+	<Threshold>
+		<Average>0.020</Average>
+		<Maxvalue>0.001</Maxvalue>
+		<WarningValue>0.001</WarningValue>
+	</Threshold>
+	<MonitorChecks>
+		<Main>DeepGreaterThanThresholdCheck</Main>
+	</MonitorChecks>
+</Counter>
 <Counter Name = "\Memory\Available MBytes">
 	<Category>Memory</Category>
 	<CounterSetName>Memory</CounterSetName>
@@ -691,7 +759,7 @@ param(
 			[Parameter(Mandatory=$true)][object]$PerformanceCounterSample 
 		)
 
-		$FullCounterSamplePath = $PerformanceCounterSample.Path 
+		$FullCounterSamplePath = $PerformanceCounterSample.Path.Replace("/_total","_total")
 		#\\adt-e2k13aio1\logicaldisk(harddiskvolume1)\avg. disk sec/read
 		$iEndOfServerIndex = $FullCounterSamplePath.IndexOf("\",2) #\\adt-e2k13aio1 <> \logicaldisk(harddiskvolume1)\avg. disk sec/read
 		$iStartOfCounterIndex = $FullCounterSamplePath.LastIndexOf("\") + 1#\\adt-e2k13aio1\logicaldisk(harddiskvolume1)\ <> avg. disk sec/read
@@ -701,7 +769,7 @@ param(
 		$obj.ServerName = ($FullCounterSamplePath.Substring(2,($iEndOfServerIndex - 2)))
 		$obj.ObjectName = ($FullCounterSamplePath.Substring($iEndOfServerIndex + 1, $iEndOfCounterObjectIndex - $iEndOfServerIndex - 1 ))
 		$obj.CounterName = ($FullCounterSamplePath.Substring($FullCounterSamplePath.LastIndexOf("\") + 1))
-		if(($FullCounterSamplePath.Contains("(")) -and ($FullCounterSamplePath.Contains("#")))
+		if(($FullCounterSamplePath.Contains("(")) -and (($FullCounterSamplePath.Contains("#")) -or ($FullCounterSamplePath.Contains("_total"))))
 		{
 				$instanceName = $FullCounterSamplePath.Substring($FullCounterSamplePath.IndexOf("(") + 1, ($FullCounterSamplePath.IndexOf(")") - $FullCounterSamplePath.IndexOf("(") - 1))
 		}
@@ -710,6 +778,9 @@ param(
 			$instanceName = ($PerformanceCounterSample.InstanceName)
 		}
 		$obj.InstanceName = $instanceName
+		Write-Verbose("ObjName: {0}" -f $obj.ObjectName)
+		Write-Verbose("CntName: {0}" -f $obj.CounterName)
+		Write-Verbose("IntName: {0}" -f $obj.InstanceName)
 		$obj.FullName = ($FullCounterSamplePath)
 		return $obj
 	}
